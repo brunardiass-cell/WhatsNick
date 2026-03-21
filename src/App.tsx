@@ -335,7 +335,7 @@ export default function App() {
         {view === 'login' && <LoginView onLogin={handleLogin} />}
         {view === 'role-select' && <RoleSelectView onSelect={handleRoleSelect} />}
         {(view === 'main' || view === 'chat') && user && (
-          <div className="flex flex-1 h-full overflow-hidden relative">
+          <div className="flex flex-1 min-h-0 overflow-hidden relative">
             <div className={cn(
               "flex-col w-full md:w-80 lg:w-96 border-r border-slate-100 bg-white z-20 h-full",
               activeChat && view === 'chat' ? "hidden md:flex" : "flex"
@@ -356,7 +356,7 @@ export default function App() {
               />
             </div>
             <div className={cn(
-              "flex-1 bg-slate-50 relative h-full overflow-hidden",
+              "flex-1 bg-slate-50 relative min-h-0 overflow-hidden flex flex-col",
               !activeChat || view !== 'chat' ? "hidden md:flex items-center justify-center" : "flex"
             )}>
               {activeChat && view === 'chat' ? (
@@ -1760,6 +1760,11 @@ function ChatView({ user, contact, onBack, setModal }: { user: UserProfile, cont
 
   const contactUid = contact.uid || contact.id;
   const chatId = [user.uid, contactUid].sort().join('_');
+  
+  useEffect(() => {
+    setInputText('');
+    setShowEmoji(false);
+  }, [contactUid]);
 
   useEffect(() => {
     if (!chatId || !user.uid || !contactUid) return;
@@ -1779,23 +1784,34 @@ function ChatView({ user, contact, onBack, setModal }: { user: UserProfile, cont
             }, { merge: true }).catch(e => console.error("Error clearing unread:", e));
           }
         }
-
-        // Auto scroll to bottom - using requestAnimationFrame and a small timeout for better mobile compatibility
-        const scrollToBottom = () => {
-          if (scrollRef.current) {
-            scrollRef.current.scrollIntoView({ behavior: 'auto', block: 'end' });
-          }
-        };
-        
-        requestAnimationFrame(scrollToBottom);
-        setTimeout(scrollToBottom, 100);
-        setTimeout(scrollToBottom, 300);
       } catch (err) {
         console.error("Error processing messages snapshot:", err);
       }
     }, (error) => handleFirestoreError(error, OperationType.LIST, `chats/${chatId}/messages`));
     return () => unsubscribe();
   }, [chatId, user.uid, contactUid]);
+
+  // Separate useEffect for scrolling to bottom
+  useEffect(() => {
+    if (messages.length === 0) return;
+    
+    const scrollToBottom = () => {
+      if (scrollRef.current) {
+        scrollRef.current.scrollIntoView({ behavior: 'auto', block: 'end' });
+      }
+    };
+    
+    requestAnimationFrame(scrollToBottom);
+    const t1 = setTimeout(scrollToBottom, 100);
+    const t2 = setTimeout(scrollToBottom, 300);
+    const t3 = setTimeout(scrollToBottom, 600); // Extra timeout for slower mobile renders
+    
+    return () => {
+      clearTimeout(t1);
+      clearTimeout(t2);
+      clearTimeout(t3);
+    };
+  }, [messages.length]);
 
   const sendMessage = async () => {
     if (!inputText.trim()) return;
@@ -1968,7 +1984,7 @@ function ChatView({ user, contact, onBack, setModal }: { user: UserProfile, cont
           let toEmail = contact.email;
           if (!toEmail) {
             try {
-              const contactDoc = await getDoc(doc(db, 'users', contact.uid));
+              const contactDoc = await getDoc(doc(db, 'users', contactUid));
               if (contactDoc.exists()) {
                 toEmail = (contactDoc.data() as UserProfile).email;
               }
@@ -2046,7 +2062,7 @@ function ChatView({ user, contact, onBack, setModal }: { user: UserProfile, cont
   return (
     <motion.div 
       initial={{ x: 300, opacity: 0 }} animate={{ x: 0, opacity: 1 }} exit={{ x: 300, opacity: 0 }}
-      className="flex flex-col flex-1 bg-[#E5DDD5] h-full w-full overflow-hidden absolute inset-0 z-30 md:relative md:z-0"
+      className="flex flex-col flex-1 bg-[#E5DDD5] h-full w-full overflow-hidden relative z-30"
     >
       <header className="p-4 bg-[#CE93D8] text-white flex items-center gap-4 shrink-0 shadow-md z-10">
         <button onClick={onBack} className="p-2 text-white md:hidden flex items-center gap-1">
@@ -2098,7 +2114,7 @@ function ChatView({ user, contact, onBack, setModal }: { user: UserProfile, cont
         </div>
       </header>
 
-      <div className="flex-1 p-4 overflow-y-auto flex flex-col gap-3 bg-slate-50 relative pb-10">
+      <div className="flex-1 p-4 overflow-y-auto flex flex-col gap-3 bg-slate-50 relative pb-10 min-h-0 overscroll-contain">
         {messages.map((msg, index) => {
           const msgDate = msg.timestamp?.toDate ? msg.timestamp.toDate() : (msg.timestamp instanceof Date ? msg.timestamp : (msg.timestamp ? new Date(msg.timestamp) : new Date()));
           const prevMsg = index > 0 ? messages[index - 1] : null;
