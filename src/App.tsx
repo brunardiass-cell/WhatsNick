@@ -1865,7 +1865,7 @@ const ChatView: React.FC<{
   useEffect(() => {
     setInputText('');
     setShowEmoji(false);
-    setMessages([]); // Clear messages when switching chats to avoid showing old ones
+    // Removed setMessages([]) to prevent race conditions with fast onSnapshot
   }, [contactUid]);
 
   useEffect(() => {
@@ -1874,7 +1874,7 @@ const ChatView: React.FC<{
       return;
     }
     
-    console.log(`[ChatView] Subscribing to messages for chatId: ${chatId} (Contact: ${contact.name})`);
+    console.log(`[ChatView] Subscribing to messages for chatId: ${chatId} (User: ${user.uid}, Contact: ${contactUid})`);
     
     let unsubscribe: () => void;
     const q = query(collection(db, 'chats', chatId, 'messages'), orderBy('timestamp', 'asc'));
