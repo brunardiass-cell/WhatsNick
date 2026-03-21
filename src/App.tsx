@@ -98,6 +98,7 @@ export default function App() {
   const [activeTab, setActiveTab] = useState<'chats' | 'calls' | 'family' | 'settings'>('chats');
   const [modal, setModal] = useState<{ type: 'confirm' | 'alert', title: string, message: string, onConfirm?: () => void } | null>(null);
   const [showMoodPrompt, setShowMoodPrompt] = useState(false);
+  const [isLinking, setIsLinking] = useState(false);
 
   const MOODS = [
     { label: 'Feliz', emoji: '😊' },
@@ -350,6 +351,8 @@ export default function App() {
                 avatars={AVATARS}
                 updateMood={updateMood}
                 updateProfilePhoto={updateProfilePhoto}
+                isLinking={isLinking}
+                setIsLinking={setIsLinking}
               />
             </div>
             <div className={cn(
@@ -424,7 +427,7 @@ export default function App() {
   );
 }
 
-function MainLayout({ user, activeTab, setActiveTab, setView, setActiveChat, setModal, moods, avatars, updateMood, updateProfilePhoto }: any) {
+function MainLayout({ user, activeTab, setActiveTab, setView, setActiveChat, setModal, moods, avatars, updateMood, updateProfilePhoto, isLinking, setIsLinking }: any) {
   return (
     <div className="flex flex-col md:flex-row h-full bg-white w-full">
       {/* Sidebar Navigation (Desktop) / Bottom Navigation (Mobile) */}
@@ -479,7 +482,7 @@ function MainLayout({ user, activeTab, setActiveTab, setView, setActiveChat, set
               : <ChildDashboard user={user} setView={setView} setActiveChat={setActiveChat} setModal={setModal} />
           )}
           {activeTab === 'calls' && <CallsView user={user} setActiveChat={setActiveChat} setView={setView} setModal={setModal} />}
-          {activeTab === 'family' && <FamilyView user={user} setModal={setModal} setView={setView} setActiveChat={setActiveChat} />}
+          {activeTab === 'family' && <FamilyView user={user} setModal={setModal} setView={setView} setActiveChat={setActiveChat} isLinking={isLinking} setIsLinking={setIsLinking} />}
           {activeTab === 'alerts' && <AlertsView user={user} setModal={setModal} />}
           {activeTab === 'settings' && (
             <SettingsView 
@@ -1053,7 +1056,7 @@ function CallsView({ user, setActiveChat, setView, setModal }: { user: UserProfi
   );
 }
 
-function FamilyView({ user, setModal, setView, setActiveChat }: { user: UserProfile, setModal: (m: any) => void, setView: (v: any) => void, setActiveChat: (c: any) => void }) {
+function FamilyView({ user, setModal, setView, setActiveChat, isLinking, setIsLinking }: { user: UserProfile, setModal: (m: any) => void, setView: (v: any) => void, setActiveChat: (c: any) => void, isLinking: boolean, setIsLinking: (l: boolean) => void }) {
   const [familyMembers, setFamilyMembers] = useState<UserProfile[]>([]);
   const [contacts, setContacts] = useState<Contact[]>([]);
   const [showAddChild, setShowAddChild] = useState(false);
@@ -1068,6 +1071,12 @@ function FamilyView({ user, setModal, setView, setActiveChat }: { user: UserProf
       const q = query(collection(db, 'users'), where('parentId', '==', user.uid));
       const unsubFamily = onSnapshot(q, (snapshot) => {
         setFamilyMembers(snapshot.docs.map(doc => doc.data() as UserProfile));
+      }, (error) => {
+        console.warn("Family members index error (expected during setup):", error);
+        // Fallback: get all users and filter (only if small dataset or for initial setup)
+        getDocs(collection(db, 'users')).then(snap => {
+          setFamilyMembers(snap.docs.filter(d => d.data().parentId === user.uid).map(d => d.data() as UserProfile));
+        });
       });
 
       const qContacts = query(collection(db, 'users', user.uid, 'contacts'));
@@ -1103,13 +1112,16 @@ function FamilyView({ user, setModal, setView, setActiveChat }: { user: UserProf
   }, [selectedChild]);
 
   const addChild = async () => {
-    if (!emailInput) return;
+    if (!emailInput || isLinking) return;
+    setIsLinking(true);
+    const normalizedEmail = emailInput.toLowerCase().trim();
     try {
-      const q = query(collection(db, 'users'), where('email', '==', emailInput));
+      const q = query(collection(db, 'users'), where('email', '==', normalizedEmail));
       const snapshot = await getDocs(q);
       
       if (snapshot.empty) {
         setModal({ title: 'Ops!', message: 'Este email não está cadastrado.', type: 'alert' });
+        setIsLinking(false);
         return;
       }
 
@@ -1118,6 +1130,7 @@ function FamilyView({ user, setModal, setView, setActiveChat }: { user: UserProf
       
       if (childData.role !== 'child') {
         setModal({ title: 'Aviso', message: 'Este usuário não é uma conta de criança.', type: 'alert' });
+        setIsLinking(false);
         return;
       }
 
@@ -1148,20 +1161,52 @@ function FamilyView({ user, setModal, setView, setActiveChat }: { user: UserProf
       // Close input modal immediately for better mobile UX
       setEmailInput('');
       setShowAddChild(false);
+      setIsLinking(false);
       setModal({ title: 'Sucesso!', message: `${childData.name} foi vinculado à sua família!`, type: 'alert' });
     } catch (error) {
+      setIsLinking(false);
       handleFirestoreError(error, OperationType.WRITE, 'users');
     }
   };
 
+  const unlinkChild = async (child: UserProfile) => {
+    setModal({
+      title: 'Desvincular Filho',
+      message: `Tem certeza que deseja desvincular ${child.name}? Esta ação removerá o vínculo de família e os contatos recíprocos.`,
+      type: 'confirm',
+      onConfirm: async () => {
+        try {
+          // 1. Remove parentId from child
+          await setDoc(doc(db, 'users', child.uid), { parentId: null }, { merge: true });
+          
+          // 2. Remove parent from child's contacts
+          await deleteDoc(doc(db, 'users', child.uid, 'contacts', user.uid));
+          
+          // 3. Remove child from parent's contacts
+          await deleteDoc(doc(db, 'users', user.uid, 'contacts', child.uid));
+          
+          setSelectedChild(null);
+          setModal({ title: 'Sucesso', message: 'Filho desvinculado com sucesso.', type: 'alert' });
+        } catch (error) {
+          console.error("Error unlinking child:", error);
+          setModal({ title: 'Erro', message: 'Não foi possível desvincular o filho.', type: 'alert' });
+          try { handleFirestoreError(error, OperationType.WRITE, `users/${child.uid}`); } catch (e) {}
+        }
+      }
+    });
+  };
+
   const addContact = async () => {
-    if (!emailInput) return;
+    if (!emailInput || isLinking) return;
+    setIsLinking(true);
+    const normalizedEmail = emailInput.toLowerCase().trim();
     try {
-      const q = query(collection(db, 'users'), where('email', '==', emailInput));
+      const q = query(collection(db, 'users'), where('email', '==', normalizedEmail));
       const snapshot = await getDocs(q);
       
       if (snapshot.empty) {
         setModal({ title: 'Aviso', message: 'Email não cadastrado.', type: 'alert' });
+        setIsLinking(false);
         return;
       }
 
@@ -1171,7 +1216,7 @@ function FamilyView({ user, setModal, setView, setActiveChat }: { user: UserProf
 
       await setDoc(doc(db, 'users', user.uid, 'contacts', friendUid), {
         uid: friendUid,
-        email: emailInput,
+        email: normalizedEmail,
         name: friendData.name,
         photoURL: friendData.photoURL || '',
         mood: friendData.mood || '',
@@ -1198,8 +1243,10 @@ function FamilyView({ user, setModal, setView, setActiveChat }: { user: UserProf
       // Close input modal immediately for better mobile UX
       setEmailInput('');
       setShowAddContact(false);
+      setIsLinking(false);
       setModal({ title: 'Sucesso', message: `Contato ${friendData.name} adicionado!`, type: 'alert' });
     } catch (error) {
+      setIsLinking(false);
       handleFirestoreError(error, OperationType.WRITE, `users/${user.uid}/contacts`);
     }
   };
@@ -1435,6 +1482,17 @@ function FamilyView({ user, setModal, setView, setActiveChat }: { user: UserProf
                 </div>
               )}
             </div>
+
+            <div className="pt-8 border-t border-slate-200">
+              <h4 className="text-sm font-bold text-red-500 uppercase tracking-wider mb-4">Zona de Perigo</h4>
+              <button 
+                onClick={() => (unlinkChild as any)(selectedChild)}
+                className="w-full py-4 bg-red-50 text-red-600 rounded-2xl font-bold border-2 border-red-100 hover:bg-red-100 transition-colors flex items-center justify-center gap-2"
+              >
+                <Trash2 className="w-5 h-5" />
+                Desvincular Filho da Família
+              </button>
+            </div>
           </div>
         ) : (
           <div className="space-y-8">
@@ -1530,8 +1588,13 @@ function FamilyView({ user, setModal, setView, setActiveChat }: { user: UserProf
               className="w-full p-4 bg-slate-50 rounded-2xl mb-8 outline-none border-2 border-transparent focus:border-[#F48FB1] text-lg"
             />
             <div className="flex gap-4">
-              <button onClick={() => { setShowAddChild(false); setShowAddContact(false); setEmailInput(''); }} className="flex-1 py-4 text-slate-500 font-bold text-lg">Cancelar</button>
-              <button onClick={showAddChild ? addChild : addContact} className="flex-1 py-4 bg-[#F48FB1] text-white rounded-2xl font-bold text-lg shadow-lg">
+              <button onClick={() => { setShowAddChild(false); setShowAddContact(false); setEmailInput(''); setIsLinking(false); }} className="flex-1 py-4 text-slate-500 font-bold text-lg">Cancelar</button>
+              <button 
+                onClick={showAddChild ? addChild : addContact} 
+                disabled={isLinking}
+                className="flex-1 py-4 bg-[#F48FB1] text-white rounded-2xl font-bold text-lg shadow-lg disabled:opacity-50 flex items-center justify-center gap-2"
+              >
+                {isLinking && <div className="w-5 h-5 border-2 border-white border-t-transparent rounded-full animate-spin" />}
                 {showAddChild ? 'Vincular' : 'Adicionar'}
               </button>
             </div>
@@ -1717,12 +1780,16 @@ function ChatView({ user, contact, onBack, setModal }: { user: UserProfile, cont
           }
         }
 
-        // Auto scroll to bottom - using requestAnimationFrame for better mobile compatibility
-        requestAnimationFrame(() => {
+        // Auto scroll to bottom - using requestAnimationFrame and a small timeout for better mobile compatibility
+        const scrollToBottom = () => {
           if (scrollRef.current) {
             scrollRef.current.scrollIntoView({ behavior: 'auto', block: 'end' });
           }
-        });
+        };
+        
+        requestAnimationFrame(scrollToBottom);
+        setTimeout(scrollToBottom, 100);
+        setTimeout(scrollToBottom, 300);
       } catch (err) {
         console.error("Error processing messages snapshot:", err);
       }
