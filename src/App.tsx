@@ -1250,6 +1250,11 @@ function FamilyView({ user, setModal, setView, setActiveChat, isLinking, setIsLi
     if (!emailInput || isLinking) return;
     setIsLinking(true);
     const normalizedEmail = emailInput.toLowerCase().trim();
+    if (normalizedEmail === user.email?.toLowerCase().trim()) {
+      setModal({ title: 'Aviso', message: 'Você não pode adicionar a si mesmo como contato.', type: 'alert' });
+      setIsLinking(false);
+      return;
+    }
     try {
       const q = query(collection(db, 'users'), where('email', '==', normalizedEmail));
       const snapshot = await getDocs(q);
@@ -1882,7 +1887,7 @@ const ChatView: React.FC<{
     unsubscribe = onSnapshot(q, { includeMetadataChanges: true }, (snapshot) => {
       try {
         const newMessages = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as Message));
-        console.log(`[ChatView] Received ${newMessages.length} messages for ${chatId}`);
+        console.log(`[ChatView] Received ${newMessages.length} messages for ${chatId}, fromCache: ${snapshot.metadata.fromCache}`);
         setMessages(newMessages);
         
         // Update last message timestamp in contacts to clear notifications
@@ -1898,21 +1903,27 @@ const ChatView: React.FC<{
         console.error("Error processing messages snapshot:", err);
       }
     }, (error) => {
-      console.warn("Firestore index error for messages, using fallback query:", error);
-      const fallbackQ = query(collection(db, 'chats', chatId, 'messages'));
-      unsubscribe = onSnapshot(fallbackQ, (snapshot) => {
-        const newMessages = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as Message))
-          .sort((a, b) => {
-            const tA = a.timestamp?.toMillis ? a.timestamp.toMillis() : (a.timestamp instanceof Date ? a.timestamp.getTime() : 0);
-            const tB = b.timestamp?.toMillis ? b.timestamp.toMillis() : (b.timestamp instanceof Date ? b.timestamp.getTime() : 0);
-            return tA - tB;
-          });
-        console.log(`[ChatView Fallback] Received ${newMessages.length} messages for ${chatId}`);
-        setMessages(newMessages);
-      }, (e) => handleFirestoreError(e, OperationType.LIST, `chats/${chatId}/messages`));
+      console.error("[ChatView] Firestore error for messages:", error);
+      if (error.code === 'failed-precondition') {
+        console.warn("Firestore index error for messages, using fallback query.");
+        const fallbackQ = query(collection(db, 'chats', chatId, 'messages'));
+        unsubscribe = onSnapshot(fallbackQ, { includeMetadataChanges: true }, (snapshot) => {
+          const newMessages = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as Message))
+            .sort((a, b) => {
+              const tA = a.timestamp?.toMillis ? a.timestamp.toMillis() : (a.timestamp instanceof Date ? a.timestamp.getTime() : 0);
+              const tB = b.timestamp?.toMillis ? b.timestamp.toMillis() : (b.timestamp instanceof Date ? b.timestamp.getTime() : 0);
+              return tA - tB;
+            });
+          console.log(`[ChatView Fallback] Received ${newMessages.length} messages for ${chatId}, fromCache: ${snapshot.metadata.fromCache}`);
+          setMessages(newMessages);
+        }, (e) => handleFirestoreError(e, OperationType.LIST, `chats/${chatId}/messages`));
+      } else {
+        handleFirestoreError(error, OperationType.LIST, `chats/${chatId}/messages`);
+      }
     });
     
     return () => {
+      console.log(`[ChatView] Unsubscribing from messages for ${chatId}`);
       if (unsubscribe) unsubscribe();
     };
   }, [chatId, user.uid, contactUid]);
@@ -1945,6 +1956,7 @@ const ChatView: React.FC<{
     setInputText('');
     setShowEmoji(false);
     try {
+      console.log(`[ChatView] Sending message to ${chatId}`);
       const messageData = {
         senderId: user.uid,
         receiverId: contactUid,
@@ -2267,7 +2279,7 @@ const ChatView: React.FC<{
                 "max-w-[85%] p-3 rounded-2xl shadow-sm relative animate-in fade-in slide-in-from-bottom-2 duration-300",
                 msg.senderId === user.uid 
                   ? "self-end bg-[#F48FB1] text-white rounded-tr-none" 
-                  : "self-start bg-white text-slate-800 rounded-tl-none",
+                  : "self-start bg-[#CE93D8] text-black rounded-tl-none",
                 (msg as any).isSOS && "border-2 border-red-500 bg-red-50"
               )}>
                 {msg.mediaType === 'image' ? (
