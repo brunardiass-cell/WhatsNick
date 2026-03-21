@@ -94,7 +94,7 @@ service cloud.firestore {
              data.name is string && data.name.size() > 0 && data.name.size() < 100 &&
              data.role in ['parent', 'child', 'admin'] &&
              (!('email' in data) || (data.email is string && data.email.size() < 100)) &&
-             (!('parentId' in data) || (data.parentId is string && data.parentId.size() > 0) || data.parentId == null) &&
+             (!('parentId' in data) || (data.parentId is string && data.parentId.size() > 0)) &&
              (!('photoURL' in data) || (data.photoURL is string && data.photoURL.size() < 2000000)) && // Increased for base64
              (!('mood' in data) || (data.mood is string && data.mood.size() < 50)) &&
              (!('moodEmoji' in data) || (data.moodEmoji is string && data.moodEmoji.size() < 20));

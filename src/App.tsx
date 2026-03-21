@@ -7,7 +7,7 @@ import { UserProfile, Contact, Message, SOSAlert, UserRole } from './types';
 import { cn } from './utils';
 import { 
   MessageCircle, Shield, Phone, Camera, Send, AlertTriangle, 
-  UserPlus, Check, X, LogOut, Settings, User, MapPin, Clock, Upload,
+  UserPlus, Check, X, LogOut, Settings, User, MapPin, Clock,
   ChevronLeft, Image as ImageIcon, Smile, Trash2, Video, Users
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
@@ -98,7 +98,6 @@ export default function App() {
   const [activeTab, setActiveTab] = useState<'chats' | 'calls' | 'family' | 'settings'>('chats');
   const [modal, setModal] = useState<{ type: 'confirm' | 'alert', title: string, message: string, onConfirm?: () => void } | null>(null);
   const [showMoodPrompt, setShowMoodPrompt] = useState(false);
-  const [isLinking, setIsLinking] = useState(false);
 
   const MOODS = [
     { label: 'Feliz', emoji: '😊' },
@@ -124,14 +123,6 @@ export default function App() {
     'https://api.dicebear.com/7.x/avataaars/svg?seed=Maya',
     'https://api.dicebear.com/7.x/avataaars/svg?seed=Jack',
     'https://api.dicebear.com/7.x/avataaars/svg?seed=Lily',
-    'https://api.dicebear.com/7.x/avataaars/svg?seed=George', // Idoso
-    'https://api.dicebear.com/7.x/avataaars/svg?seed=Bessie', // Idosa
-    'https://api.dicebear.com/7.x/avataaars/svg?seed=Arthur', // Idoso 2
-    'https://api.dicebear.com/7.x/avataaars/svg?seed=Martha', // Idosa 2
-    'https://api.dicebear.com/7.x/avataaars/svg?seed=Toby',   // Criança menino
-    'https://api.dicebear.com/7.x/avataaars/svg?seed=Zoe',    // Criança menina
-    'https://api.dicebear.com/7.x/avataaars/svg?seed=Harry',  // Adulto
-    'https://api.dicebear.com/7.x/avataaars/svg?seed=Emma'    // Adulta
   ];
 
   useEffect(() => {
@@ -335,7 +326,7 @@ export default function App() {
         {view === 'login' && <LoginView onLogin={handleLogin} />}
         {view === 'role-select' && <RoleSelectView onSelect={handleRoleSelect} />}
         {(view === 'main' || view === 'chat') && user && (
-          <div className="flex flex-1 min-h-0 overflow-hidden relative">
+          <div className="flex flex-1 h-full overflow-hidden relative">
             <div className={cn(
               "flex-col w-full md:w-80 lg:w-96 border-r border-slate-100 bg-white z-20 h-full",
               activeChat && view === 'chat' ? "hidden md:flex" : "flex"
@@ -351,17 +342,14 @@ export default function App() {
                 avatars={AVATARS}
                 updateMood={updateMood}
                 updateProfilePhoto={updateProfilePhoto}
-                isLinking={isLinking}
-                setIsLinking={setIsLinking}
               />
             </div>
             <div className={cn(
-              "flex-1 bg-slate-50 relative min-h-0 overflow-hidden flex flex-col",
+              "flex-1 bg-slate-50 relative h-full overflow-hidden",
               !activeChat || view !== 'chat' ? "hidden md:flex items-center justify-center" : "flex"
             )}>
               {activeChat && view === 'chat' ? (
                 <ChatView 
-                  key={activeChat.uid || activeChat.id}
                   user={user} 
                   contact={activeChat} 
                   setModal={setModal}
@@ -428,7 +416,7 @@ export default function App() {
   );
 }
 
-function MainLayout({ user, activeTab, setActiveTab, setView, setActiveChat, setModal, moods, avatars, updateMood, updateProfilePhoto, isLinking, setIsLinking }: any) {
+function MainLayout({ user, activeTab, setActiveTab, setView, setActiveChat, setModal, moods, avatars, updateMood, updateProfilePhoto }: any) {
   return (
     <div className="flex flex-col md:flex-row h-full bg-white w-full">
       {/* Sidebar Navigation (Desktop) / Bottom Navigation (Mobile) */}
@@ -483,7 +471,7 @@ function MainLayout({ user, activeTab, setActiveTab, setView, setActiveChat, set
               : <ChildDashboard user={user} setView={setView} setActiveChat={setActiveChat} setModal={setModal} />
           )}
           {activeTab === 'calls' && <CallsView user={user} setActiveChat={setActiveChat} setView={setView} setModal={setModal} />}
-          {activeTab === 'family' && <FamilyView user={user} setModal={setModal} setView={setView} setActiveChat={setActiveChat} isLinking={isLinking} setIsLinking={setIsLinking} />}
+          {activeTab === 'family' && <FamilyView user={user} setModal={setModal} setView={setView} setActiveChat={setActiveChat} />}
           {activeTab === 'alerts' && <AlertsView user={user} setModal={setModal} />}
           {activeTab === 'settings' && (
             <SettingsView 
@@ -517,29 +505,12 @@ function AlertsView({ user, setModal }: { user: UserProfile, setModal: (m: any) 
 
   useEffect(() => {
     if (children.length === 0) return;
-    let unsubscribe: () => void;
     const childIds = children.map(c => c.uid);
     const q = query(collection(db, 'sos_alerts'), where('childId', 'in', childIds), orderBy('timestamp', 'desc'));
-    
-    unsubscribe = onSnapshot(q, (snapshot) => {
+    const unsubscribe = onSnapshot(q, (snapshot) => {
       setSosAlerts(snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as SOSAlert)));
-    }, (error) => {
-      console.warn("Firestore index error for AlertsView, using fallback:", error);
-      const fallbackQ = query(collection(db, 'sos_alerts'), where('childId', 'in', childIds));
-      unsubscribe = onSnapshot(fallbackQ, (snapshot) => {
-        const alerts = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as SOSAlert))
-          .sort((a, b) => {
-            const tA = a.timestamp?.toMillis ? a.timestamp.toMillis() : (a.timestamp instanceof Date ? a.timestamp.getTime() : 0);
-            const tB = b.timestamp?.toMillis ? b.timestamp.toMillis() : (b.timestamp instanceof Date ? b.timestamp.getTime() : 0);
-            return tB - tA; // Descending
-          });
-        setSosAlerts(alerts);
-      }, (e) => handleFirestoreError(e, OperationType.LIST, 'sos_alerts'));
-    });
-    
-    return () => {
-      if (unsubscribe) unsubscribe();
-    };
+    }, (error) => handleFirestoreError(error, OperationType.LIST, 'sos_alerts'));
+    return () => unsubscribe();
   }, [children]);
 
   const dismissSOS = async (id: string) => {
@@ -579,20 +550,7 @@ function AlertsView({ user, setModal }: { user: UserProfile, setModal: (m: any) 
         <h1 className="text-2xl font-bold">Alertas SOS</h1>
       </header>
       
-      <main className="flex-1 p-6 overflow-y-auto">
-        <section className="bg-white p-6 rounded-[32px] shadow-sm border border-slate-100 mb-6">
-          <h3 className="text-lg font-bold text-slate-800 mb-2">Configuração de E-mail (SOS)</h3>
-          <p className="text-sm text-slate-600 mb-4">
-            Para que os e-mails de SOS cheguem, você deve configurar as credenciais SMTP nos <strong>Ajustes do AI Studio</strong> (ícone de engrenagem no topo do editor).
-          </p>
-          <div className="bg-slate-50 p-4 rounded-2xl text-[10px] font-mono text-slate-500 space-y-1">
-            <p>SMTP_HOST = smtp.gmail.com (exemplo)</p>
-            <p>SMTP_PORT = 587</p>
-            <p>SMTP_USER = seu-email@gmail.com</p>
-            <p>SMTP_PASS = sua-senha-de-app</p>
-          </div>
-        </section>
-
+      <main className="flex-1 p-6">
         {user.role !== 'parent' ? (
           <div className="flex flex-col items-center justify-center h-full text-slate-400 gap-4 text-center">
             <Shield className="w-16 h-16 opacity-20" />
@@ -785,34 +743,28 @@ function ParentDashboard({ user, setView, setActiveChat, setModal }: { user: Use
 
   // Listen for parent's own contacts (friends/other parents)
   useEffect(() => {
-    let unsubscribe: () => void;
-    // Remove orderBy from server query to ensure all contacts are visible even if lastMessageAt is missing
     const q = query(
       collection(db, 'users', user.uid, 'contacts'), 
-      where('approved', '==', true)
+      where('approved', '==', true),
+      orderBy('lastMessageAt', 'desc')
     );
-    
-    unsubscribe = onSnapshot(q, (snapshot) => {
-      const fetchedContacts = snapshot.docs.map(doc => {
+    const unsubscribe = onSnapshot(q, (snapshot) => {
+      setContacts(snapshot.docs.map(doc => {
         const data = doc.data();
         return { id: doc.id, uid: data.uid || doc.id, ...data } as Contact;
-      });
-      
-      // Sort client-side
-      fetchedContacts.sort((a, b) => {
-        const tA = a.lastMessageAt?.toMillis ? a.lastMessageAt.toMillis() : (a.lastMessageAt instanceof Date ? a.lastMessageAt.getTime() : 0);
-        const tB = b.lastMessageAt?.toMillis ? b.lastMessageAt.toMillis() : (b.lastMessageAt instanceof Date ? b.lastMessageAt.getTime() : 0);
-        return tB - tA;
-      });
-      
-      setContacts(fetchedContacts);
+      }));
     }, (error) => {
-      handleFirestoreError(error, OperationType.LIST, 'users/contacts');
+      // Fallback if index is not ready
+      const fallbackQ = query(collection(db, 'users', user.uid, 'contacts'), where('approved', '==', true));
+      onSnapshot(fallbackQ, (s) => {
+        setContacts(s.docs.map(d => {
+          const data = d.data();
+          return { id: d.id, uid: data.uid || d.id, ...data } as Contact;
+        }));
+      });
+      console.warn("Firestore index error (expected during setup):", error);
     });
-    
-    return () => {
-      if (unsubscribe) unsubscribe();
-    };
+    return () => unsubscribe();
   }, [user.uid]);
 
   return (
@@ -928,59 +880,50 @@ function ChildDashboard({ user, setView, setActiveChat, setModal }: { user: User
   const [contacts, setContacts] = useState<Contact[]>([]);
 
   useEffect(() => {
-    let unsubscribe: () => void;
-    // Remove orderBy from server query to ensure all contacts are visible
     const q = query(
       collection(db, 'users', user.uid, 'contacts'), 
-      where('approved', '==', true)
+      where('approved', '==', true),
+      orderBy('lastMessageAt', 'desc')
     );
-    
-    unsubscribe = onSnapshot(q, (snapshot) => {
-      const fetchedContacts = snapshot.docs.map(doc => {
+    const unsubscribe = onSnapshot(q, (snapshot) => {
+      setContacts(snapshot.docs.map(doc => {
         const data = doc.data();
         return { id: doc.id, uid: data.uid || doc.id, ...data } as Contact;
-      });
-      
-      // Sort client-side
-      fetchedContacts.sort((a, b) => {
-        const tA = a.lastMessageAt?.toMillis ? a.lastMessageAt.toMillis() : (a.lastMessageAt instanceof Date ? a.lastMessageAt.getTime() : 0);
-        const tB = b.lastMessageAt?.toMillis ? b.lastMessageAt.toMillis() : (b.lastMessageAt instanceof Date ? b.lastMessageAt.getTime() : 0);
-        return tB - tA;
-      });
-      
-      setContacts(fetchedContacts);
+      }));
     }, (error) => {
-      handleFirestoreError(error, OperationType.LIST, 'users/contacts');
+      // Fallback if index is not ready
+      const fallbackQ = query(collection(db, 'users', user.uid, 'contacts'), where('approved', '==', true));
+      onSnapshot(fallbackQ, (s) => {
+        setContacts(s.docs.map(d => {
+          const data = d.data();
+          return { id: d.id, uid: data.uid || d.id, ...data } as Contact;
+        }));
+      });
+      console.warn("Firestore index error (expected during setup):", error);
     });
 
     // Auto-add parent as contact if not present
     if (user.parentId) {
       const checkParent = async () => {
-        try {
-          const parentDoc = await getDoc(doc(db, 'users', user.parentId!));
-          if (parentDoc.exists()) {
-            const parentData = parentDoc.data() as UserProfile;
-            const contactDoc = await getDoc(doc(db, 'users', user.uid, 'contacts', user.parentId!));
-            if (!contactDoc.exists()) {
-              await setDoc(doc(db, 'users', user.uid, 'contacts', user.parentId!), {
-                uid: user.parentId,
-                name: `Pai/Mãe (${parentData.name})`,
-                photoURL: parentData.photoURL || '',
-                approved: true,
-                childId: user.uid
-              });
-            }
+        const parentDoc = await getDoc(doc(db, 'users', user.parentId!));
+        if (parentDoc.exists()) {
+          const parentData = parentDoc.data() as UserProfile;
+          const contactDoc = await getDoc(doc(db, 'users', user.uid, 'contacts', user.parentId!));
+          if (!contactDoc.exists()) {
+            await setDoc(doc(db, 'users', user.uid, 'contacts', user.parentId!), {
+              uid: user.parentId,
+              name: `Pai/Mãe (${parentData.name})`,
+              photoURL: parentData.photoURL || '',
+              approved: true,
+              childId: user.uid
+            });
           }
-        } catch (err) {
-          console.error("Error auto-adding parent:", err);
         }
       };
       checkParent();
     }
 
-    return () => {
-      if (unsubscribe) unsubscribe();
-    };
+    return () => unsubscribe();
   }, [user.uid, user.parentId]);
 
   return (
@@ -1102,7 +1045,7 @@ function CallsView({ user, setActiveChat, setView, setModal }: { user: UserProfi
   );
 }
 
-function FamilyView({ user, setModal, setView, setActiveChat, isLinking, setIsLinking }: { user: UserProfile, setModal: (m: any) => void, setView: (v: any) => void, setActiveChat: (c: any) => void, isLinking: boolean, setIsLinking: (l: boolean) => void }) {
+function FamilyView({ user, setModal, setView, setActiveChat }: { user: UserProfile, setModal: (m: any) => void, setView: (v: any) => void, setActiveChat: (c: any) => void }) {
   const [familyMembers, setFamilyMembers] = useState<UserProfile[]>([]);
   const [contacts, setContacts] = useState<Contact[]>([]);
   const [showAddChild, setShowAddChild] = useState(false);
@@ -1113,41 +1056,27 @@ function FamilyView({ user, setModal, setView, setActiveChat, isLinking, setIsLi
   const [friendEmail, setFriendEmail] = useState('');
 
   useEffect(() => {
-    let unsubFamily: (() => void) | undefined;
-    let unsubContacts: (() => void) | undefined;
-    let unsubParent: (() => void) | undefined;
-
     if (user.role === 'parent') {
       const q = query(collection(db, 'users'), where('parentId', '==', user.uid));
-      unsubFamily = onSnapshot(q, (snapshot) => {
+      const unsubFamily = onSnapshot(q, (snapshot) => {
         setFamilyMembers(snapshot.docs.map(doc => doc.data() as UserProfile));
-      }, (error) => {
-        console.warn("Family members index error, using fallback:", error);
-        getDocs(collection(db, 'users')).then(snap => {
-          setFamilyMembers(snap.docs.filter(d => d.data().parentId === user.uid).map(d => d.data() as UserProfile));
-        }).catch(e => handleFirestoreError(e, OperationType.LIST, 'users'));
       });
 
       const qContacts = query(collection(db, 'users', user.uid, 'contacts'));
-      unsubContacts = onSnapshot(qContacts, (snapshot) => {
+      const unsubContacts = onSnapshot(qContacts, (snapshot) => {
         setContacts(snapshot.docs.map(doc => {
           const data = doc.data();
           return { id: doc.id, uid: data.uid || doc.id, ...data } as Contact;
         }));
-      }, (error) => handleFirestoreError(error, OperationType.LIST, `users/${user.uid}/contacts`));
+      });
 
+      return () => { unsubFamily(); unsubContacts(); };
     } else if (user.parentId) {
       const q = query(collection(db, 'users'), where('uid', '==', user.parentId));
-      unsubParent = onSnapshot(q, (snapshot) => {
+      return onSnapshot(q, (snapshot) => {
         setFamilyMembers(snapshot.docs.map(doc => doc.data() as UserProfile));
-      }, (error) => handleFirestoreError(error, OperationType.GET, `users/${user.parentId}`));
+      });
     }
-
-    return () => { 
-      if (unsubFamily) unsubFamily(); 
-      if (unsubContacts) unsubContacts(); 
-      if (unsubParent) unsubParent();
-    };
   }, [user.uid, user.role, user.parentId]);
 
   useEffect(() => {
@@ -1166,16 +1095,13 @@ function FamilyView({ user, setModal, setView, setActiveChat, isLinking, setIsLi
   }, [selectedChild]);
 
   const addChild = async () => {
-    if (!emailInput || isLinking) return;
-    setIsLinking(true);
-    const normalizedEmail = emailInput.toLowerCase().trim();
+    if (!emailInput) return;
     try {
-      const q = query(collection(db, 'users'), where('email', '==', normalizedEmail));
+      const q = query(collection(db, 'users'), where('email', '==', emailInput));
       const snapshot = await getDocs(q);
       
       if (snapshot.empty) {
         setModal({ title: 'Ops!', message: 'Este email não está cadastrado.', type: 'alert' });
-        setIsLinking(false);
         return;
       }
 
@@ -1184,7 +1110,6 @@ function FamilyView({ user, setModal, setView, setActiveChat, isLinking, setIsLi
       
       if (childData.role !== 'child') {
         setModal({ title: 'Aviso', message: 'Este usuário não é uma conta de criança.', type: 'alert' });
-        setIsLinking(false);
         return;
       }
 
@@ -1212,60 +1137,22 @@ function FamilyView({ user, setModal, setView, setActiveChat, isLinking, setIsLi
         lastMessageAt: serverTimestamp()
       });
 
-      // Close input modal immediately for better mobile UX
       setEmailInput('');
       setShowAddChild(false);
-      setIsLinking(false);
       setModal({ title: 'Sucesso!', message: `${childData.name} foi vinculado à sua família!`, type: 'alert' });
     } catch (error) {
-      setIsLinking(false);
       handleFirestoreError(error, OperationType.WRITE, 'users');
     }
   };
 
-  const unlinkChild = async (child: UserProfile) => {
-    setModal({
-      title: 'Desvincular Filho',
-      message: `Tem certeza que deseja desvincular ${child.name}? Esta ação removerá o vínculo de família e os contatos recíprocos.`,
-      type: 'confirm',
-      onConfirm: async () => {
-        try {
-          // 1. Remove parentId from child
-          await setDoc(doc(db, 'users', child.uid), { parentId: null }, { merge: true });
-          
-          // 2. Remove parent from child's contacts
-          await deleteDoc(doc(db, 'users', child.uid, 'contacts', user.uid));
-          
-          // 3. Remove child from parent's contacts
-          await deleteDoc(doc(db, 'users', user.uid, 'contacts', child.uid));
-          
-          setSelectedChild(null);
-          setModal({ title: 'Sucesso', message: 'Filho desvinculado com sucesso.', type: 'alert' });
-        } catch (error) {
-          console.error("Error unlinking child:", error);
-          setModal({ title: 'Erro', message: 'Não foi possível desvincular o filho.', type: 'alert' });
-          try { handleFirestoreError(error, OperationType.WRITE, `users/${child.uid}`); } catch (e) {}
-        }
-      }
-    });
-  };
-
   const addContact = async () => {
-    if (!emailInput || isLinking) return;
-    setIsLinking(true);
-    const normalizedEmail = emailInput.toLowerCase().trim();
-    if (normalizedEmail === user.email?.toLowerCase().trim()) {
-      setModal({ title: 'Aviso', message: 'Você não pode adicionar a si mesmo como contato.', type: 'alert' });
-      setIsLinking(false);
-      return;
-    }
+    if (!emailInput) return;
     try {
-      const q = query(collection(db, 'users'), where('email', '==', normalizedEmail));
+      const q = query(collection(db, 'users'), where('email', '==', emailInput));
       const snapshot = await getDocs(q);
       
       if (snapshot.empty) {
         setModal({ title: 'Aviso', message: 'Email não cadastrado.', type: 'alert' });
-        setIsLinking(false);
         return;
       }
 
@@ -1275,7 +1162,7 @@ function FamilyView({ user, setModal, setView, setActiveChat, isLinking, setIsLi
 
       await setDoc(doc(db, 'users', user.uid, 'contacts', friendUid), {
         uid: friendUid,
-        email: normalizedEmail,
+        email: emailInput,
         name: friendData.name,
         photoURL: friendData.photoURL || '',
         mood: friendData.mood || '',
@@ -1299,13 +1186,10 @@ function FamilyView({ user, setModal, setView, setActiveChat, isLinking, setIsLi
         lastMessageAt: serverTimestamp()
       });
 
-      // Close input modal immediately for better mobile UX
       setEmailInput('');
       setShowAddContact(false);
-      setIsLinking(false);
       setModal({ title: 'Sucesso', message: `Contato ${friendData.name} adicionado!`, type: 'alert' });
     } catch (error) {
-      setIsLinking(false);
       handleFirestoreError(error, OperationType.WRITE, `users/${user.uid}/contacts`);
     }
   };
@@ -1541,17 +1425,6 @@ function FamilyView({ user, setModal, setView, setActiveChat, isLinking, setIsLi
                 </div>
               )}
             </div>
-
-            <div className="pt-8 border-t border-slate-200">
-              <h4 className="text-sm font-bold text-red-500 uppercase tracking-wider mb-4">Zona de Perigo</h4>
-              <button 
-                onClick={() => (unlinkChild as any)(selectedChild)}
-                className="w-full py-4 bg-red-50 text-red-600 rounded-2xl font-bold border-2 border-red-100 hover:bg-red-100 transition-colors flex items-center justify-center gap-2"
-              >
-                <Trash2 className="w-5 h-5" />
-                Desvincular Filho da Família
-              </button>
-            </div>
           </div>
         ) : (
           <div className="space-y-8">
@@ -1647,13 +1520,8 @@ function FamilyView({ user, setModal, setView, setActiveChat, isLinking, setIsLi
               className="w-full p-4 bg-slate-50 rounded-2xl mb-8 outline-none border-2 border-transparent focus:border-[#F48FB1] text-lg"
             />
             <div className="flex gap-4">
-              <button onClick={() => { setShowAddChild(false); setShowAddContact(false); setEmailInput(''); setIsLinking(false); }} className="flex-1 py-4 text-slate-500 font-bold text-lg">Cancelar</button>
-              <button 
-                onClick={showAddChild ? addChild : addContact} 
-                disabled={isLinking}
-                className="flex-1 py-4 bg-[#F48FB1] text-white rounded-2xl font-bold text-lg shadow-lg disabled:opacity-50 flex items-center justify-center gap-2"
-              >
-                {isLinking && <div className="w-5 h-5 border-2 border-white border-t-transparent rounded-full animate-spin" />}
+              <button onClick={() => { setShowAddChild(false); setShowAddContact(false); setEmailInput(''); }} className="flex-1 py-4 text-slate-500 font-bold text-lg">Cancelar</button>
+              <button onClick={showAddChild ? addChild : addContact} className="flex-1 py-4 bg-[#F48FB1] text-white rounded-2xl font-bold text-lg shadow-lg">
                 {showAddChild ? 'Vincular' : 'Adicionar'}
               </button>
             </div>
@@ -1735,28 +1603,6 @@ function SettingsView({ user, onLogout, setModal, moods, avatars, updateMood, up
 
         <section className="space-y-4">
           <h4 className="font-bold text-slate-800 flex items-center gap-2">
-            <Camera className="w-5 h-5 text-[#CE93D8]" />
-            Sua Foto de Perfil
-          </h4>
-          <div className="flex items-center gap-4 p-4 bg-white rounded-3xl border border-slate-100 shadow-sm">
-            <img 
-              src={user.photoURL || `https://api.dicebear.com/7.x/avataaars/svg?seed=${user.uid}`} 
-              className="w-16 h-16 rounded-full border-2 border-[#CE93D8]/20 object-cover" 
-              alt="" 
-            />
-            <div className="flex-1">
-              <p className="text-xs text-slate-500 mb-2">Use uma foto sua ou escolha um personagem abaixo.</p>
-              <label className="inline-flex items-center gap-2 px-4 py-2 bg-[#CE93D8] text-white rounded-xl text-sm font-bold cursor-pointer hover:bg-[#BA68C8] transition-colors">
-                <Upload className="w-4 h-4" />
-                Carregar Foto
-                <input type="file" accept="image/*" className="hidden" onChange={handlePhotoUpload} />
-              </label>
-            </div>
-          </div>
-        </section>
-
-        <section className="space-y-4">
-          <h4 className="font-bold text-slate-800 flex items-center gap-2">
             <Smile className="w-5 h-5 text-[#F48FB1]" />
             Como você está hoje?
           </h4>
@@ -1798,52 +1644,6 @@ function SettingsView({ user, onLogout, setModal, moods, avatars, updateMood, up
           </div>
         </section>
 
-        {user.role === 'parent' && (
-          <section className="space-y-4 bg-amber-50 p-6 rounded-3xl border border-amber-100">
-            <h4 className="font-bold text-amber-800 flex items-center gap-2">
-              <Shield className="w-5 h-5" />
-              Configuração de E-mail (SOS)
-            </h4>
-            <div className="space-y-3 text-sm text-amber-900/80">
-              <p>Para que os alertas de SOS cheguem ao seu e-mail real, você precisa configurar as credenciais SMTP no painel de <strong>Secrets</strong> do AI Studio:</p>
-              <ul className="list-disc list-inside space-y-1 ml-2">
-                <li><code>SMTP_HOST</code>: Ex: smtp.gmail.com</li>
-                <li><code>SMTP_PORT</code>: Ex: 465 ou 587</li>
-                <li><code>SMTP_USER</code>: Seu e-mail</li>
-                <li><code>SMTP_PASS</code>: Sua senha de app</li>
-              </ul>
-              <button 
-                onClick={async () => {
-                  try {
-                    const response = await fetch('/api/sos/email', {
-                      method: 'POST',
-                      headers: { 'Content-Type': 'application/json' },
-                      body: JSON.stringify({
-                        fromEmail: user.email,
-                        toEmail: user.email,
-                        senderName: 'Teste de Configuração',
-                        location: { lat: -23.5505, lng: -46.6333 }
-                      })
-                    });
-                    const data = await response.json();
-                    if (data.success) {
-                      setModal({ title: 'Sucesso', message: 'E-mail de teste enviado! Verifique sua caixa de entrada (e o spam).', type: 'alert' });
-                    } else {
-                      setModal({ title: 'Erro', message: 'Falha ao enviar e-mail. Verifique os logs do servidor.', type: 'alert' });
-                    }
-                  } catch (e) {
-                    setModal({ title: 'Erro', message: 'Erro de conexão com o servidor.', type: 'alert' });
-                  }
-                }}
-                className="mt-2 px-4 py-2 bg-amber-200 text-amber-900 rounded-xl font-bold text-xs hover:bg-amber-300 transition-colors"
-              >
-                Enviar E-mail de Teste
-              </button>
-              <p className="text-xs italic mt-2">Sem essas configurações, os e-mails serão enviados para um servidor de teste (Ethereal).</p>
-            </div>
-          </section>
-        )}
-
         <button 
           onClick={onLogout}
           className="w-full p-4 bg-white text-red-500 rounded-3xl font-bold shadow-sm border border-slate-100 flex items-center justify-center gap-2 hover:bg-red-50 transition-colors"
@@ -1856,12 +1656,7 @@ function SettingsView({ user, onLogout, setModal, moods, avatars, updateMood, up
   );
 }
 
-const ChatView: React.FC<{ 
-  user: UserProfile, 
-  contact: Contact, 
-  onBack: () => void, 
-  setModal: (m: any) => void 
-}> = ({ user, contact, onBack, setModal }) => {
+function ChatView({ user, contact, onBack, setModal }: { user: UserProfile, contact: Contact, onBack: () => void, setModal: (m: any) => void }) {
   const [messages, setMessages] = useState<Message[]>([]);
   const [inputText, setInputText] = useState('');
   const [showEmoji, setShowEmoji] = useState(false);
@@ -1870,83 +1665,38 @@ const ChatView: React.FC<{
 
   const contactUid = contact.uid || contact.id;
   const chatId = [user.uid, contactUid].sort().join('_');
-  
-  useEffect(() => {
-    setInputText('');
-    setShowEmoji(false);
-    // Removed setMessages([]) to prevent race conditions with fast onSnapshot
-  }, [contactUid]);
 
   useEffect(() => {
-    if (!chatId || !user.uid || !contactUid) {
-      console.log(`[ChatView] Missing required IDs: chatId=${chatId}, user.uid=${user.uid}, contactUid=${contactUid}`);
-      return;
-    }
-    
-    console.log(`[ChatView] Subscribing to messages for chatId: ${chatId} (User: ${user.uid}, Contact: ${contactUid})`);
-    
-    let unsubscribe: () => void;
-    // Remove orderBy from server query to avoid issues with pending timestamps or missing indexes
-    const q = query(collection(db, 'chats', chatId, 'messages'));
-    
-    unsubscribe = onSnapshot(q, { includeMetadataChanges: true }, (snapshot) => {
+    if (!chatId || !user.uid || !contactUid) return;
+    const q = query(collection(db, 'chats', chatId, 'messages'), orderBy('timestamp', 'asc'));
+    const unsubscribe = onSnapshot(q, { includeMetadataChanges: true }, (snapshot) => {
       try {
-        const fetchedMessages = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as Message));
-        
-        // Sort client-side
-        fetchedMessages.sort((a, b) => {
-          const tA = a.timestamp?.toMillis ? a.timestamp.toMillis() : (a.timestamp instanceof Date ? a.timestamp.getTime() : 0);
-          const tB = b.timestamp?.toMillis ? b.timestamp.toMillis() : (b.timestamp instanceof Date ? b.timestamp.getTime() : 0);
-          return tA - tB;
-        });
-        
-        console.log(`[ChatView] Received ${fetchedMessages.length} messages for ${chatId}, fromCache: ${snapshot.metadata.fromCache}`);
-        setMessages(fetchedMessages);
+        const newMessages = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as Message));
+        setMessages(newMessages);
         
         // Update last message timestamp in contacts to clear notifications
-        if (fetchedMessages.length > 0) {
-          const lastMsg = fetchedMessages[fetchedMessages.length - 1];
+        if (newMessages.length > 0) {
+          const lastMsg = newMessages[newMessages.length - 1];
+          // Only clear if the last message was from the other person
           if (lastMsg.senderId !== user.uid) {
             setDoc(doc(db, 'users', user.uid, 'contacts', contactUid), { 
               hasUnread: false 
             }, { merge: true }).catch(e => console.error("Error clearing unread:", e));
           }
         }
+
+        // Auto scroll to bottom
+        setTimeout(() => {
+          if (scrollRef.current) {
+            scrollRef.current.scrollIntoView({ behavior: 'auto', block: 'end' });
+          }
+        }, 100);
       } catch (err) {
         console.error("Error processing messages snapshot:", err);
       }
-    }, (error) => {
-      console.error("[ChatView] Firestore error for messages:", error);
-      handleFirestoreError(error, OperationType.LIST, `chats/${chatId}/messages`);
-    });
-    
-    return () => {
-      console.log(`[ChatView] Unsubscribing from messages for ${chatId}`);
-      if (unsubscribe) unsubscribe();
-    };
-  }, [chatId, user.uid, contactUid]);
-
-  // Separate useEffect for scrolling to bottom
-  useEffect(() => {
-    if (messages.length === 0) return;
-    
-    const scrollToBottom = () => {
-      if (scrollRef.current) {
-        scrollRef.current.scrollIntoView({ behavior: 'auto', block: 'end' });
-      }
-    };
-    
-    requestAnimationFrame(scrollToBottom);
-    const t1 = setTimeout(scrollToBottom, 100);
-    const t2 = setTimeout(scrollToBottom, 300);
-    const t3 = setTimeout(scrollToBottom, 600); // Extra timeout for slower mobile renders
-    
-    return () => {
-      clearTimeout(t1);
-      clearTimeout(t2);
-      clearTimeout(t3);
-    };
-  }, [messages.length]);
+    }, (error) => handleFirestoreError(error, OperationType.LIST, `chats/${chatId}/messages`));
+    return () => unsubscribe();
+  }, [chatId, user.uid, contact.uid]);
 
   const sendMessage = async () => {
     if (!inputText.trim()) return;
@@ -1954,7 +1704,6 @@ const ChatView: React.FC<{
     setInputText('');
     setShowEmoji(false);
     try {
-      console.log(`[ChatView] Sending message to ${chatId}`);
       const messageData = {
         senderId: user.uid,
         receiverId: contactUid,
@@ -2120,7 +1869,7 @@ const ChatView: React.FC<{
           let toEmail = contact.email;
           if (!toEmail) {
             try {
-              const contactDoc = await getDoc(doc(db, 'users', contactUid));
+              const contactDoc = await getDoc(doc(db, 'users', contact.uid));
               if (contactDoc.exists()) {
                 toEmail = (contactDoc.data() as UserProfile).email;
               }
@@ -2198,7 +1947,7 @@ const ChatView: React.FC<{
   return (
     <motion.div 
       initial={{ x: 300, opacity: 0 }} animate={{ x: 0, opacity: 1 }} exit={{ x: 300, opacity: 0 }}
-      className="flex flex-col flex-1 bg-[#E5DDD5] w-full overflow-hidden relative z-30 min-h-0"
+      className="flex flex-col flex-1 bg-[#E5DDD5] h-full w-full overflow-hidden absolute inset-0 z-30 md:relative md:z-0"
     >
       <header className="p-4 bg-[#CE93D8] text-white flex items-center gap-4 shrink-0 shadow-md z-10">
         <button onClick={onBack} className="p-2 text-white md:hidden flex items-center gap-1">
@@ -2250,14 +1999,8 @@ const ChatView: React.FC<{
         </div>
       </header>
 
-      <div className="flex-1 p-4 overflow-y-auto flex flex-col gap-3 bg-slate-50 relative pb-10 min-h-0 overscroll-contain">
-        {messages.length === 0 ? (
-          <div className="flex-1 flex flex-col items-center justify-center text-slate-400 gap-2 opacity-50">
-            <MessageCircle className="w-12 h-12" />
-            <p className="text-sm font-medium">Nenhuma mensagem ainda.</p>
-            <p className="text-[10px]">Diga oi para começar!</p>
-          </div>
-        ) : messages.map((msg, index) => {
+      <div className="flex-1 p-4 overflow-y-auto flex flex-col gap-3 bg-slate-50 relative">
+        {messages.map((msg, index) => {
           const msgDate = msg.timestamp?.toDate ? msg.timestamp.toDate() : (msg.timestamp instanceof Date ? msg.timestamp : (msg.timestamp ? new Date(msg.timestamp) : new Date()));
           const prevMsg = index > 0 ? messages[index - 1] : null;
           const prevMsgDate = prevMsg?.timestamp?.toDate ? prevMsg.timestamp.toDate() : (prevMsg?.timestamp instanceof Date ? prevMsg.timestamp : (prevMsg?.timestamp ? new Date(prevMsg.timestamp) : null));
@@ -2277,7 +2020,7 @@ const ChatView: React.FC<{
                 "max-w-[85%] p-3 rounded-2xl shadow-sm relative animate-in fade-in slide-in-from-bottom-2 duration-300",
                 msg.senderId === user.uid 
                   ? "self-end bg-[#F48FB1] text-white rounded-tr-none" 
-                  : "self-start bg-[#CE93D8] text-black rounded-tl-none",
+                  : "self-start bg-white text-slate-800 rounded-tl-none",
                 (msg as any).isSOS && "border-2 border-red-500 bg-red-50"
               )}>
                 {msg.mediaType === 'image' ? (
@@ -2298,17 +2041,6 @@ const ChatView: React.FC<{
                       <Phone className="w-4 h-4" />
                       Atender / Entrar
                     </button>
-                    <a 
-                      href={msg.meetUrl} 
-                      target="_blank" 
-                      rel="noopener noreferrer"
-                      className={cn(
-                        "text-[10px] text-center underline opacity-70 hover:opacity-100 mt-1 block",
-                        msg.senderId === user.uid ? "text-white" : "text-slate-500"
-                      )}
-                    >
-                      Entrar pelo navegador (sem app)
-                    </a>
                   </div>
                 ) : (
                   <p className={cn("text-sm break-words", (msg as any).isSOS && "font-bold text-red-600")}>
