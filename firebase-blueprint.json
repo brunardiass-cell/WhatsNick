@@ -1,0 +1,86 @@
+{
+  "entities": {
+    "User": {
+      "title": "User",
+      "description": "User profile for children and parents",
+      "type": "object",
+      "properties": {
+        "uid": { "type": "string" },
+        "name": { "type": "string" },
+        "email": { "type": "string" },
+        "role": { "type": "string", "enum": ["parent", "child"] },
+        "parentId": { "type": "string", "description": "UID of the parent if this is a child account" },
+        "photoURL": { "type": "string" },
+        "mood": { "type": "string" },
+        "moodEmoji": { "type": "string" },
+        "moodUpdatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["uid", "name", "role"]
+    },
+    "Contact": {
+      "title": "Contact",
+      "description": "Authorized contact for a child",
+      "type": "object",
+      "properties": {
+        "uid": { "type": "string" },
+        "name": { "type": "string" },
+        "photoURL": { "type": "string" },
+        "approved": { "type": "boolean" },
+        "childId": { "type": "string" },
+        "mood": { "type": "string" },
+        "moodEmoji": { "type": "string" }
+      },
+      "required": ["uid", "name", "approved", "childId"]
+    },
+    "Message": {
+      "title": "Message",
+      "description": "Chat message",
+      "type": "object",
+      "properties": {
+        "senderId": { "type": "string" },
+        "receiverId": { "type": "string" },
+        "text": { "type": "string" },
+        "mediaUrl": { "type": "string" },
+        "mediaType": { "type": "string", "enum": ["text", "image"] },
+        "timestamp": { "type": "string", "format": "date-time" }
+      },
+      "required": ["senderId", "receiverId", "timestamp"]
+    },
+    "SOSAlert": {
+      "title": "SOSAlert",
+      "description": "Emergency alert from a child",
+      "type": "object",
+      "properties": {
+        "childId": { "type": "string" },
+        "location": {
+          "type": "object",
+          "properties": {
+            "lat": { "type": "number" },
+            "lng": { "type": "number" }
+          }
+        },
+        "timestamp": { "type": "string", "format": "date-time" },
+        "message": { "type": "string" }
+      },
+      "required": ["childId", "timestamp"]
+    }
+  },
+  "firestore": {
+    "/users/{userId}": {
+      "schema": "User",
+      "description": "User profiles"
+    },
+    "/users/{userId}/contacts/{contactId}": {
+      "schema": "Contact",
+      "description": "Authorized contacts for a child"
+    },
+    "/chats/{chatId}/messages/{messageId}": {
+      "schema": "Message",
+      "description": "Messages in a chat session"
+    },
+    "/sos_alerts/{alertId}": {
+      "schema": "SOSAlert",
+      "description": "Emergency alerts"
+    }
+  }
+}

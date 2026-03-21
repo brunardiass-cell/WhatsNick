@@ -1,0 +1,190 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // ===============================================================
+    // Assumed Data Model
+    // ===============================================================
+    //
+    // Collection: users
+    // Document ID: {userId}
+    // Fields:
+    //   - uid: string (required)
+    //   - name: string (required)
+    //   - email: string (optional)
+    //   - role: string (required, 'parent' | 'child')
+    //   - parentId: string (optional, for children)
+    //   - photoURL: string (optional)
+    //
+    // Collection: users/{userId}/contacts
+    // Document ID: {contactId}
+    // Fields:
+    //   - uid: string (required)
+    //   - name: string (required)
+    //   - approved: bool (required)
+    //   - childId: string (required)
+    //   - meetAuthorized: bool (optional)
+    //
+    // Collection: pending_contacts
+    // Document ID: {inviteId}
+    // Fields:
+    //   - targetEmail: string (required)
+    //   - fromUid: string (required)
+    //   - fromName: string (required)
+    //   - fromPhoto: string (optional)
+    //   - timestamp: timestamp (required)
+    //
+    // Collection: chats/{chatId}/messages
+    // Document ID: {messageId}
+    // Fields:
+    //   - senderId: string (required)
+    //   - receiverId: string (required)
+    //   - text: string (optional)
+    //   - mediaUrl: string (optional)
+    //   - mediaType: string (required, 'text' | 'image')
+    //   - timestamp: timestamp (required)
+    //
+    // Collection: sos_alerts
+    // Document ID: {alertId}
+    // Fields:
+    //   - childId: string (required)
+    //   - location: map (optional)
+    //   - timestamp: timestamp (required)
+    //   - message: string (required)
+    //
+    // ===============================================================
+
+    // ===============================================================
+    // Helper Functions
+    // ===============================================================
+    
+    function isAuthenticated() {
+      return request.auth != null;
+    }
+
+    function isOwner(userId) {
+      return isAuthenticated() && request.auth.uid == userId;
+    }
+
+    function isParentOf(childId) {
+      return isAuthenticated() && 
+        get(/databases/$(database)/documents/users/$(childId)).data.parentId == request.auth.uid;
+    }
+
+    function isAdmin() {
+      return isAuthenticated() &&
+        (get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'admin' ||
+          (request.auth.token.email == "brunardiass@gmail.com" && request.auth.token.email_verified == true));
+    }
+
+    function hasRequiredFields(fields) {
+      return request.resource.data.keys().hasAll(fields);
+    }
+
+    function hasOnlyAllowedFields(fields) {
+      return request.resource.data.keys().hasOnly(fields);
+    }
+
+    // ===============================================================
+    // Domain Validators
+    // ===============================================================
+
+    function isValidUser(data) {
+      return hasRequiredFields(['uid', 'name', 'role']) &&
+             data.uid is string && data.uid.size() > 0 &&
+             data.name is string && data.name.size() > 0 && data.name.size() < 100 &&
+             data.role in ['parent', 'child', 'admin'] &&
+             (!('email' in data) || (data.email is string && data.email.size() < 100)) &&
+             (!('parentId' in data) || (data.parentId is string && data.parentId.size() > 0)) &&
+             (!('photoURL' in data) || (data.photoURL is string && data.photoURL.size() < 2000000)) && // Increased for base64
+             (!('mood' in data) || (data.mood is string && data.mood.size() < 50)) &&
+             (!('moodEmoji' in data) || (data.moodEmoji is string && data.moodEmoji.size() < 20));
+    }
+
+    function isValidContact(data) {
+      return hasRequiredFields(['uid', 'name', 'approved', 'childId']) &&
+             data.uid is string && data.name is string && data.name.size() < 100 &&
+             data.approved is bool && data.childId is string &&
+             (!('meetAuthorized' in data) || data.meetAuthorized is bool) &&
+             (!('photoURL' in data) || (data.photoURL is string && data.photoURL.size() < 2000000)) &&
+             (!('mood' in data) || (data.mood is string && data.mood.size() < 50)) &&
+             (!('moodEmoji' in data) || (data.moodEmoji is string && data.moodEmoji.size() < 20)) &&
+             (!('lastMessageAt' in data) || (data.lastMessageAt is timestamp || data.lastMessageAt == null)) &&
+             (!('hasUnread' in data) || data.hasUnread is bool) &&
+             (!('lastMessageText' in data) || (data.lastMessageText is string && data.lastMessageText.size() < 5000));
+    }
+
+    function isValidPendingContact(data) {
+      return hasRequiredFields(['targetEmail', 'fromUid', 'fromName', 'timestamp']) &&
+             data.targetEmail is string && data.fromUid is string &&
+             data.fromName is string && data.timestamp is timestamp;
+    }
+
+    function isValidMessage(data) {
+      return hasRequiredFields(['senderId', 'receiverId', 'mediaType', 'timestamp']) &&
+             data.senderId is string && data.receiverId is string &&
+             data.mediaType in ['text', 'image', 'call'] &&
+             (!('text' in data) || (data.text is string && data.text.size() < 5000)) &&
+             (!('mediaUrl' in data) || (data.mediaUrl is string && data.mediaUrl.size() < 1048487)) &&
+             (!('meetUrl' in data) || (data.meetUrl is string && data.meetUrl.size() < 1000)) &&
+             (!('isSOS' in data) || data.isSOS is bool);
+    }
+
+    function isValidSOS(data) {
+      return hasRequiredFields(['childId', 'timestamp', 'message']) &&
+             data.childId is string && data.message is string && data.message.size() < 500;
+    }
+
+    function isContactSelfUpdate(contactId) {
+      return isAuthenticated() && 
+             request.auth.uid == contactId && 
+             request.resource.data.diff(resource.data).affectedKeys()
+               .hasOnly(['photoURL', 'mood', 'moodEmoji', 'lastMessageAt', 'hasUnread', 'lastMessageText']);
+    }
+
+    // ===============================================================
+    // Rules
+    // ===============================================================
+
+    match /users/{userId} {
+      allow read: if isAuthenticated(); // Allow users to find each other by email
+      allow create: if isAuthenticated() && isValidUser(request.resource.data) && (request.auth.uid == userId);
+      allow update: if isAuthenticated() && isValidUser(request.resource.data) && 
+                    (isOwner(userId) || isParentOf(userId) || isAdmin());
+
+      match /contacts/{contactId} {
+        allow read: if isOwner(userId) || isParentOf(userId) || isAdmin();
+        allow create: if (isOwner(userId) || isParentOf(userId) || isAdmin()) && isValidContact(request.resource.data);
+        allow update: if ((isOwner(userId) || isParentOf(userId) || isAdmin()) && isValidContact(request.resource.data)) || 
+                      isContactSelfUpdate(contactId);
+        allow delete: if isOwner(userId) || isParentOf(userId) || isAdmin();
+      }
+    }
+
+    match /pending_contacts/{inviteId} {
+      allow read: if isAuthenticated() && (request.auth.token.email == resource.data.targetEmail || isAdmin());
+      allow create: if isAuthenticated() && isValidPendingContact(request.resource.data);
+      allow delete: if isAuthenticated() && (request.auth.token.email == resource.data.targetEmail || isAdmin());
+    }
+
+    match /chats/{chatId} {
+      allow read: if isAuthenticated() && (chatId.contains(request.auth.uid) || isAdmin());
+      
+      match /messages/{messageId} {
+        allow read: if isAuthenticated() && (chatId.contains(request.auth.uid) || isAdmin());
+        allow create: if isAuthenticated() && (request.resource.data.senderId == request.auth.uid) && isValidMessage(request.resource.data);
+        allow delete: if isAuthenticated() && (chatId.contains(request.auth.uid) || isAdmin());
+      }
+    }
+
+    match /sos_alerts/{alertId} {
+      allow read: if isAuthenticated() && (isParentOf(resource.data.childId) || isAdmin());
+      allow create: if isAuthenticated() && (request.resource.data.childId == request.auth.uid) && isValidSOS(request.resource.data);
+      allow delete: if isAuthenticated() && (isParentOf(resource.data.childId) || isAdmin());
+    }
+
+    // Default deny
+    match /{document=**} {
+      allow read, write: if false;
+    }
+  }
+}
