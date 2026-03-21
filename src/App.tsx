@@ -146,43 +146,6 @@ export default function App() {
             }
 
             if (view === 'login' || view === 'role-select') setView('main');
-            
-            // Real-time listener for incoming pending invites
-            const qInvites = query(collection(db, 'pending_contacts'), where('targetEmail', '==', firebaseUser.email));
-            const unsubInvites = onSnapshot(qInvites, (snapshot) => {
-              setPendingInvites(snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as PendingInvite)));
-            });
-
-            // Real-time listener for sent invites that were accepted
-            const qSent = query(collection(db, 'pending_contacts'), where('fromUid', '==', firebaseUser.uid), where('accepted', '==', true));
-            const unsubSent = onSnapshot(qSent, (snapshot) => {
-              snapshot.docs.forEach(async (inviteDoc) => {
-                const invite = inviteDoc.data() as PendingInvite;
-                // Find the user profile for the target email
-                const qUser = query(collection(db, 'users'), where('email', '==', invite.targetEmail));
-                const userSnapshot = await getDocs(qUser);
-                if (!userSnapshot.empty) {
-                  const targetUser = userSnapshot.docs[0].data() as UserProfile;
-                  // Add to current user's contacts
-                  await setDoc(doc(db, 'users', firebaseUser.uid, 'contacts', targetUser.uid), {
-                    uid: targetUser.uid,
-                    name: targetUser.name,
-                    photoURL: targetUser.photoURL || '',
-                    approved: true,
-                    childId: firebaseUser.uid,
-                    meetAuthorized: false,
-                    lastMessageAt: serverTimestamp()
-                  });
-                }
-                // Delete the invite
-                await deleteDoc(doc(db, 'pending_contacts', inviteDoc.id));
-              });
-            });
-
-            return () => {
-              if (unsubInvites) unsubInvites();
-              if (unsubSent) unsubSent();
-            };
           } else {
             setView('role-select');
           }
@@ -203,6 +166,48 @@ export default function App() {
       if (unsubProfile) unsubProfile();
     };
   }, []);
+
+  // Separate effect for invites and accepted sent invites
+  useEffect(() => {
+    if (!user) return;
+
+    // Real-time listener for incoming pending invites
+    const qInvites = query(collection(db, 'pending_contacts'), where('targetEmail', '==', user.email));
+    const unsubInvites = onSnapshot(qInvites, (snapshot) => {
+      setPendingInvites(snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as PendingInvite)));
+    });
+
+    // Real-time listener for sent invites that were accepted
+    const qSent = query(collection(db, 'pending_contacts'), where('fromUid', '==', user.uid), where('accepted', '==', true));
+    const unsubSent = onSnapshot(qSent, (snapshot) => {
+      snapshot.docs.forEach(async (inviteDoc) => {
+        const invite = inviteDoc.data() as PendingInvite;
+        // Find the user profile for the target email
+        const qUser = query(collection(db, 'users'), where('email', '==', invite.targetEmail));
+        const userSnapshot = await getDocs(qUser);
+        if (!userSnapshot.empty) {
+          const targetUser = userSnapshot.docs[0].data() as UserProfile;
+          // Add to current user's contacts
+          await setDoc(doc(db, 'users', user.uid, 'contacts', targetUser.uid), {
+            uid: targetUser.uid,
+            name: targetUser.name,
+            photoURL: targetUser.photoURL || '',
+            approved: true,
+            childId: user.uid,
+            meetAuthorized: false,
+            lastMessageAt: serverTimestamp()
+          });
+        }
+        // Delete the invite
+        await deleteDoc(doc(db, 'pending_contacts', inviteDoc.id));
+      });
+    });
+
+    return () => {
+      unsubInvites();
+      unsubSent();
+    };
+  }, [user?.uid]);
 
   const updateMood = async (mood: string, emoji: string) => {
     if (!user) return;
@@ -335,13 +340,34 @@ export default function App() {
     }
   };
 
+  const clearAllContacts = async () => {
+    if (!user) return;
+    setModal({
+      type: 'confirm',
+      title: 'Limpar Contatos',
+      message: 'Tem certeza que deseja remover TODOS os seus contatos? Esta ação não pode ser desfeita.',
+      onConfirm: async () => {
+        try {
+          const contactsSnap = await getDocs(collection(db, 'users', user.uid, 'contacts'));
+          const deletePromises = contactsSnap.docs.map(async (contactDoc) => {
+            return deleteDoc(doc(db, 'users', user.uid, 'contacts', contactDoc.id));
+          });
+          await Promise.all(deletePromises);
+          setModal({ type: 'alert', title: 'Sucesso', message: 'Todos os contatos foram removidos.' });
+        } catch (error) {
+          handleFirestoreError(error, OperationType.DELETE, 'contacts');
+        }
+      }
+    });
+  };
+
   if (loading) {
     return (
-      <div className="flex items-center justify-center min-h-screen bg-white">
+      <div className="flex flex-col items-center justify-center min-h-screen bg-white p-6">
         <motion.div 
           animate={{ scale: [1, 1.1, 1] }}
           transition={{ repeat: Infinity, duration: 1.5 }}
-          className="flex flex-col items-center"
+          className="flex flex-col items-center mb-12"
         >
           <div className="w-24 h-24 mb-6 rounded-[32px] flex items-center justify-center shadow-xl relative overflow-hidden" style={{ background: NICK_GRADIENT }}>
             <div className="absolute inset-0 bg-white/20 blur-xl" />
@@ -351,6 +377,14 @@ export default function App() {
           </div>
           <p className="text-[#F48FB1] font-bold text-xl tracking-tight">WhatsNick...</p>
         </motion.div>
+        
+        <button 
+          onClick={() => signOut(auth)}
+          className="flex items-center gap-2 px-6 py-3 text-slate-400 hover:text-slate-600 transition-colors font-medium"
+        >
+          <LogOut className="w-5 h-5" />
+          Sair da conta
+        </button>
       </div>
     );
   }
@@ -419,6 +453,7 @@ export default function App() {
                 acceptInvite={acceptInvite}
                 declineInvite={declineInvite}
                 setShowAddFriendModal={setShowAddFriendModal}
+                onClearContacts={clearAllContacts}
               />
             </div>
             <div className={cn(
@@ -530,7 +565,7 @@ export default function App() {
   );
 }
 
-function MainLayout({ user, activeTab, setActiveTab, setView, setActiveChat, setModal, moods, avatars, updateMood, updateProfilePhoto, pendingInvites, acceptInvite, declineInvite, setShowAddFriendModal }: any) {
+function MainLayout({ user, activeTab, setActiveTab, setView, setActiveChat, setModal, moods, avatars, updateMood, updateProfilePhoto, pendingInvites, acceptInvite, declineInvite, setShowAddFriendModal, onClearContacts }: any) {
   return (
     <div className="flex flex-col md:flex-row h-full bg-white w-full">
       {/* Sidebar Navigation (Desktop) / Bottom Navigation (Mobile) */}
@@ -597,6 +632,7 @@ function MainLayout({ user, activeTab, setActiveTab, setView, setActiveChat, set
               avatars={avatars}
               updateMood={updateMood}
               updateProfilePhoto={updateProfilePhoto}
+              onClearContacts={onClearContacts}
             />
           )}
         </div>
@@ -1702,7 +1738,7 @@ function FamilyView({ user, setModal, setView, setActiveChat }: { user: UserProf
   );
 }
 
-function SettingsView({ user, onLogout, setModal, moods, avatars, updateMood, updateProfilePhoto }: { user: UserProfile, onLogout: () => void, setModal: (m: any) => void, moods: any[], avatars: string[], updateMood: (m: string, e: string) => void, updateProfilePhoto: (url: string) => Promise<void> }) {
+function SettingsView({ user, onLogout, setModal, moods, avatars, updateMood, updateProfilePhoto, onClearContacts }: { user: UserProfile, onLogout: () => void, setModal: (m: any) => void, moods: any[], avatars: string[], updateMood: (m: string, e: string) => void, updateProfilePhoto: (url: string) => Promise<void>, onClearContacts: () => void }) {
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [uploading, setUploading] = useState(false);
 
@@ -1813,6 +1849,14 @@ function SettingsView({ user, onLogout, setModal, moods, avatars, updateMood, up
             ))}
           </div>
         </section>
+
+        <button 
+          onClick={onClearContacts}
+          className="w-full p-4 bg-white text-orange-500 rounded-3xl font-bold shadow-sm border border-slate-100 flex items-center justify-center gap-2 hover:bg-orange-50 transition-colors"
+        >
+          <Trash2 className="w-5 h-5" />
+          Limpar Todos os Contatos
+        </button>
 
         <button 
           onClick={onLogout}
