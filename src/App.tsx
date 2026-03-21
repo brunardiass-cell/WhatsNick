@@ -7,7 +7,7 @@ import { UserProfile, Contact, Message, SOSAlert, UserRole } from './types';
 import { cn } from './utils';
 import { 
   MessageCircle, Shield, Phone, Camera, Send, AlertTriangle, 
-  UserPlus, Check, X, LogOut, Settings, User, MapPin, Clock,
+  UserPlus, Check, X, LogOut, Settings, User, MapPin, Clock, Upload,
   ChevronLeft, Image as ImageIcon, Smile, Trash2, Video, Users
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
@@ -123,6 +123,14 @@ export default function App() {
     'https://api.dicebear.com/7.x/avataaars/svg?seed=Maya',
     'https://api.dicebear.com/7.x/avataaars/svg?seed=Jack',
     'https://api.dicebear.com/7.x/avataaars/svg?seed=Lily',
+    'https://api.dicebear.com/7.x/avataaars/svg?seed=George', // Idoso
+    'https://api.dicebear.com/7.x/avataaars/svg?seed=Bessie', // Idosa
+    'https://api.dicebear.com/7.x/avataaars/svg?seed=Arthur', // Idoso 2
+    'https://api.dicebear.com/7.x/avataaars/svg?seed=Martha', // Idosa 2
+    'https://api.dicebear.com/7.x/avataaars/svg?seed=Toby',   // Criança menino
+    'https://api.dicebear.com/7.x/avataaars/svg?seed=Zoe',    // Criança menina
+    'https://api.dicebear.com/7.x/avataaars/svg?seed=Harry',  // Adulto
+    'https://api.dicebear.com/7.x/avataaars/svg?seed=Emma'    // Adulta
   ];
 
   useEffect(() => {
@@ -1137,6 +1145,7 @@ function FamilyView({ user, setModal, setView, setActiveChat }: { user: UserProf
         lastMessageAt: serverTimestamp()
       });
 
+      // Close input modal immediately for better mobile UX
       setEmailInput('');
       setShowAddChild(false);
       setModal({ title: 'Sucesso!', message: `${childData.name} foi vinculado à sua família!`, type: 'alert' });
@@ -1186,6 +1195,7 @@ function FamilyView({ user, setModal, setView, setActiveChat }: { user: UserProf
         lastMessageAt: serverTimestamp()
       });
 
+      // Close input modal immediately for better mobile UX
       setEmailInput('');
       setShowAddContact(false);
       setModal({ title: 'Sucesso', message: `Contato ${friendData.name} adicionado!`, type: 'alert' });
@@ -1603,6 +1613,28 @@ function SettingsView({ user, onLogout, setModal, moods, avatars, updateMood, up
 
         <section className="space-y-4">
           <h4 className="font-bold text-slate-800 flex items-center gap-2">
+            <Camera className="w-5 h-5 text-[#CE93D8]" />
+            Sua Foto de Perfil
+          </h4>
+          <div className="flex items-center gap-4 p-4 bg-white rounded-3xl border border-slate-100 shadow-sm">
+            <img 
+              src={user.photoURL || `https://api.dicebear.com/7.x/avataaars/svg?seed=${user.uid}`} 
+              className="w-16 h-16 rounded-full border-2 border-[#CE93D8]/20 object-cover" 
+              alt="" 
+            />
+            <div className="flex-1">
+              <p className="text-xs text-slate-500 mb-2">Use uma foto sua ou escolha um personagem abaixo.</p>
+              <label className="inline-flex items-center gap-2 px-4 py-2 bg-[#CE93D8] text-white rounded-xl text-sm font-bold cursor-pointer hover:bg-[#BA68C8] transition-colors">
+                <Upload className="w-4 h-4" />
+                Carregar Foto
+                <input type="file" accept="image/*" className="hidden" onChange={handlePhotoUpload} />
+              </label>
+            </div>
+          </div>
+        </section>
+
+        <section className="space-y-4">
+          <h4 className="font-bold text-slate-800 flex items-center gap-2">
             <Smile className="w-5 h-5 text-[#F48FB1]" />
             Como você está hoje?
           </h4>
@@ -1685,18 +1717,18 @@ function ChatView({ user, contact, onBack, setModal }: { user: UserProfile, cont
           }
         }
 
-        // Auto scroll to bottom
-        setTimeout(() => {
+        // Auto scroll to bottom - using requestAnimationFrame for better mobile compatibility
+        requestAnimationFrame(() => {
           if (scrollRef.current) {
             scrollRef.current.scrollIntoView({ behavior: 'auto', block: 'end' });
           }
-        }, 100);
+        });
       } catch (err) {
         console.error("Error processing messages snapshot:", err);
       }
     }, (error) => handleFirestoreError(error, OperationType.LIST, `chats/${chatId}/messages`));
     return () => unsubscribe();
-  }, [chatId, user.uid, contact.uid]);
+  }, [chatId, user.uid, contactUid]);
 
   const sendMessage = async () => {
     if (!inputText.trim()) return;
@@ -1999,7 +2031,7 @@ function ChatView({ user, contact, onBack, setModal }: { user: UserProfile, cont
         </div>
       </header>
 
-      <div className="flex-1 p-4 overflow-y-auto flex flex-col gap-3 bg-slate-50 relative">
+      <div className="flex-1 p-4 overflow-y-auto flex flex-col gap-3 bg-slate-50 relative pb-10">
         {messages.map((msg, index) => {
           const msgDate = msg.timestamp?.toDate ? msg.timestamp.toDate() : (msg.timestamp instanceof Date ? msg.timestamp : (msg.timestamp ? new Date(msg.timestamp) : new Date()));
           const prevMsg = index > 0 ? messages[index - 1] : null;
