@@ -361,6 +361,7 @@ export default function App() {
             )}>
               {activeChat && view === 'chat' ? (
                 <ChatView 
+                  key={activeChat.uid || activeChat.id}
                   user={user} 
                   contact={activeChat} 
                   setModal={setModal}
@@ -516,12 +517,29 @@ function AlertsView({ user, setModal }: { user: UserProfile, setModal: (m: any) 
 
   useEffect(() => {
     if (children.length === 0) return;
+    let unsubscribe: () => void;
     const childIds = children.map(c => c.uid);
     const q = query(collection(db, 'sos_alerts'), where('childId', 'in', childIds), orderBy('timestamp', 'desc'));
-    const unsubscribe = onSnapshot(q, (snapshot) => {
+    
+    unsubscribe = onSnapshot(q, (snapshot) => {
       setSosAlerts(snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as SOSAlert)));
-    }, (error) => handleFirestoreError(error, OperationType.LIST, 'sos_alerts'));
-    return () => unsubscribe();
+    }, (error) => {
+      console.warn("Firestore index error for AlertsView, using fallback:", error);
+      const fallbackQ = query(collection(db, 'sos_alerts'), where('childId', 'in', childIds));
+      unsubscribe = onSnapshot(fallbackQ, (snapshot) => {
+        const alerts = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as SOSAlert))
+          .sort((a, b) => {
+            const tA = a.timestamp?.toMillis ? a.timestamp.toMillis() : (a.timestamp instanceof Date ? a.timestamp.getTime() : 0);
+            const tB = b.timestamp?.toMillis ? b.timestamp.toMillis() : (b.timestamp instanceof Date ? b.timestamp.getTime() : 0);
+            return tB - tA; // Descending
+          });
+        setSosAlerts(alerts);
+      }, (e) => handleFirestoreError(e, OperationType.LIST, 'sos_alerts'));
+    });
+    
+    return () => {
+      if (unsubscribe) unsubscribe();
+    };
   }, [children]);
 
   const dismissSOS = async (id: string) => {
@@ -561,7 +579,20 @@ function AlertsView({ user, setModal }: { user: UserProfile, setModal: (m: any) 
         <h1 className="text-2xl font-bold">Alertas SOS</h1>
       </header>
       
-      <main className="flex-1 p-6">
+      <main className="flex-1 p-6 overflow-y-auto">
+        <section className="bg-white p-6 rounded-[32px] shadow-sm border border-slate-100 mb-6">
+          <h3 className="text-lg font-bold text-slate-800 mb-2">Configuração de E-mail (SOS)</h3>
+          <p className="text-sm text-slate-600 mb-4">
+            Para que os e-mails de SOS cheguem, você deve configurar as credenciais SMTP nos <strong>Ajustes do AI Studio</strong> (ícone de engrenagem no topo do editor).
+          </p>
+          <div className="bg-slate-50 p-4 rounded-2xl text-[10px] font-mono text-slate-500 space-y-1">
+            <p>SMTP_HOST = smtp.gmail.com (exemplo)</p>
+            <p>SMTP_PORT = 587</p>
+            <p>SMTP_USER = seu-email@gmail.com</p>
+            <p>SMTP_PASS = sua-senha-de-app</p>
+          </div>
+        </section>
+
         {user.role !== 'parent' ? (
           <div className="flex flex-col items-center justify-center h-full text-slate-400 gap-4 text-center">
             <Shield className="w-16 h-16 opacity-20" />
@@ -754,28 +785,32 @@ function ParentDashboard({ user, setView, setActiveChat, setModal }: { user: Use
 
   // Listen for parent's own contacts (friends/other parents)
   useEffect(() => {
+    let unsubscribe: () => void;
     const q = query(
       collection(db, 'users', user.uid, 'contacts'), 
       where('approved', '==', true),
       orderBy('lastMessageAt', 'desc')
     );
-    const unsubscribe = onSnapshot(q, (snapshot) => {
+    
+    unsubscribe = onSnapshot(q, (snapshot) => {
       setContacts(snapshot.docs.map(doc => {
         const data = doc.data();
         return { id: doc.id, uid: data.uid || doc.id, ...data } as Contact;
       }));
     }, (error) => {
-      // Fallback if index is not ready
+      console.warn("Firestore index error for ParentDashboard, using fallback:", error);
       const fallbackQ = query(collection(db, 'users', user.uid, 'contacts'), where('approved', '==', true));
-      onSnapshot(fallbackQ, (s) => {
+      unsubscribe = onSnapshot(fallbackQ, (s) => {
         setContacts(s.docs.map(d => {
           const data = d.data();
           return { id: d.id, uid: data.uid || d.id, ...data } as Contact;
         }));
-      });
-      console.warn("Firestore index error (expected during setup):", error);
+      }, (e) => handleFirestoreError(e, OperationType.LIST, 'users/contacts'));
     });
-    return () => unsubscribe();
+    
+    return () => {
+      if (unsubscribe) unsubscribe();
+    };
   }, [user.uid]);
 
   return (
@@ -891,50 +926,57 @@ function ChildDashboard({ user, setView, setActiveChat, setModal }: { user: User
   const [contacts, setContacts] = useState<Contact[]>([]);
 
   useEffect(() => {
+    let unsubscribe: () => void;
     const q = query(
       collection(db, 'users', user.uid, 'contacts'), 
       where('approved', '==', true),
       orderBy('lastMessageAt', 'desc')
     );
-    const unsubscribe = onSnapshot(q, (snapshot) => {
+    
+    unsubscribe = onSnapshot(q, (snapshot) => {
       setContacts(snapshot.docs.map(doc => {
         const data = doc.data();
         return { id: doc.id, uid: data.uid || doc.id, ...data } as Contact;
       }));
     }, (error) => {
-      // Fallback if index is not ready
+      console.warn("Firestore index error for ChildDashboard, using fallback:", error);
       const fallbackQ = query(collection(db, 'users', user.uid, 'contacts'), where('approved', '==', true));
-      onSnapshot(fallbackQ, (s) => {
+      unsubscribe = onSnapshot(fallbackQ, (s) => {
         setContacts(s.docs.map(d => {
           const data = d.data();
           return { id: d.id, uid: data.uid || d.id, ...data } as Contact;
         }));
-      });
-      console.warn("Firestore index error (expected during setup):", error);
+      }, (e) => handleFirestoreError(e, OperationType.LIST, 'users/contacts'));
     });
 
     // Auto-add parent as contact if not present
     if (user.parentId) {
       const checkParent = async () => {
-        const parentDoc = await getDoc(doc(db, 'users', user.parentId!));
-        if (parentDoc.exists()) {
-          const parentData = parentDoc.data() as UserProfile;
-          const contactDoc = await getDoc(doc(db, 'users', user.uid, 'contacts', user.parentId!));
-          if (!contactDoc.exists()) {
-            await setDoc(doc(db, 'users', user.uid, 'contacts', user.parentId!), {
-              uid: user.parentId,
-              name: `Pai/Mãe (${parentData.name})`,
-              photoURL: parentData.photoURL || '',
-              approved: true,
-              childId: user.uid
-            });
+        try {
+          const parentDoc = await getDoc(doc(db, 'users', user.parentId!));
+          if (parentDoc.exists()) {
+            const parentData = parentDoc.data() as UserProfile;
+            const contactDoc = await getDoc(doc(db, 'users', user.uid, 'contacts', user.parentId!));
+            if (!contactDoc.exists()) {
+              await setDoc(doc(db, 'users', user.uid, 'contacts', user.parentId!), {
+                uid: user.parentId,
+                name: `Pai/Mãe (${parentData.name})`,
+                photoURL: parentData.photoURL || '',
+                approved: true,
+                childId: user.uid
+              });
+            }
           }
+        } catch (err) {
+          console.error("Error auto-adding parent:", err);
         }
       };
       checkParent();
     }
 
-    return () => unsubscribe();
+    return () => {
+      if (unsubscribe) unsubscribe();
+    };
   }, [user.uid, user.parentId]);
 
   return (
@@ -1067,33 +1109,41 @@ function FamilyView({ user, setModal, setView, setActiveChat, isLinking, setIsLi
   const [friendEmail, setFriendEmail] = useState('');
 
   useEffect(() => {
+    let unsubFamily: (() => void) | undefined;
+    let unsubContacts: (() => void) | undefined;
+    let unsubParent: (() => void) | undefined;
+
     if (user.role === 'parent') {
       const q = query(collection(db, 'users'), where('parentId', '==', user.uid));
-      const unsubFamily = onSnapshot(q, (snapshot) => {
+      unsubFamily = onSnapshot(q, (snapshot) => {
         setFamilyMembers(snapshot.docs.map(doc => doc.data() as UserProfile));
       }, (error) => {
-        console.warn("Family members index error (expected during setup):", error);
-        // Fallback: get all users and filter (only if small dataset or for initial setup)
+        console.warn("Family members index error, using fallback:", error);
         getDocs(collection(db, 'users')).then(snap => {
           setFamilyMembers(snap.docs.filter(d => d.data().parentId === user.uid).map(d => d.data() as UserProfile));
-        });
+        }).catch(e => handleFirestoreError(e, OperationType.LIST, 'users'));
       });
 
       const qContacts = query(collection(db, 'users', user.uid, 'contacts'));
-      const unsubContacts = onSnapshot(qContacts, (snapshot) => {
+      unsubContacts = onSnapshot(qContacts, (snapshot) => {
         setContacts(snapshot.docs.map(doc => {
           const data = doc.data();
           return { id: doc.id, uid: data.uid || doc.id, ...data } as Contact;
         }));
-      });
+      }, (error) => handleFirestoreError(error, OperationType.LIST, `users/${user.uid}/contacts`));
 
-      return () => { unsubFamily(); unsubContacts(); };
     } else if (user.parentId) {
       const q = query(collection(db, 'users'), where('uid', '==', user.parentId));
-      return onSnapshot(q, (snapshot) => {
+      unsubParent = onSnapshot(q, (snapshot) => {
         setFamilyMembers(snapshot.docs.map(doc => doc.data() as UserProfile));
-      });
+      }, (error) => handleFirestoreError(error, OperationType.GET, `users/${user.parentId}`));
     }
+
+    return () => { 
+      if (unsubFamily) unsubFamily(); 
+      if (unsubContacts) unsubContacts(); 
+      if (unsubParent) unsubParent();
+    };
   }, [user.uid, user.role, user.parentId]);
 
   useEffect(() => {
@@ -1739,6 +1789,52 @@ function SettingsView({ user, onLogout, setModal, moods, avatars, updateMood, up
           </div>
         </section>
 
+        {user.role === 'parent' && (
+          <section className="space-y-4 bg-amber-50 p-6 rounded-3xl border border-amber-100">
+            <h4 className="font-bold text-amber-800 flex items-center gap-2">
+              <Shield className="w-5 h-5" />
+              Configuração de E-mail (SOS)
+            </h4>
+            <div className="space-y-3 text-sm text-amber-900/80">
+              <p>Para que os alertas de SOS cheguem ao seu e-mail real, você precisa configurar as credenciais SMTP no painel de <strong>Secrets</strong> do AI Studio:</p>
+              <ul className="list-disc list-inside space-y-1 ml-2">
+                <li><code>SMTP_HOST</code>: Ex: smtp.gmail.com</li>
+                <li><code>SMTP_PORT</code>: Ex: 465 ou 587</li>
+                <li><code>SMTP_USER</code>: Seu e-mail</li>
+                <li><code>SMTP_PASS</code>: Sua senha de app</li>
+              </ul>
+              <button 
+                onClick={async () => {
+                  try {
+                    const response = await fetch('/api/sos/email', {
+                      method: 'POST',
+                      headers: { 'Content-Type': 'application/json' },
+                      body: JSON.stringify({
+                        fromEmail: user.email,
+                        toEmail: user.email,
+                        senderName: 'Teste de Configuração',
+                        location: { lat: -23.5505, lng: -46.6333 }
+                      })
+                    });
+                    const data = await response.json();
+                    if (data.success) {
+                      setModal({ title: 'Sucesso', message: 'E-mail de teste enviado! Verifique sua caixa de entrada (e o spam).', type: 'alert' });
+                    } else {
+                      setModal({ title: 'Erro', message: 'Falha ao enviar e-mail. Verifique os logs do servidor.', type: 'alert' });
+                    }
+                  } catch (e) {
+                    setModal({ title: 'Erro', message: 'Erro de conexão com o servidor.', type: 'alert' });
+                  }
+                }}
+                className="mt-2 px-4 py-2 bg-amber-200 text-amber-900 rounded-xl font-bold text-xs hover:bg-amber-300 transition-colors"
+              >
+                Enviar E-mail de Teste
+              </button>
+              <p className="text-xs italic mt-2">Sem essas configurações, os e-mails serão enviados para um servidor de teste (Ethereal).</p>
+            </div>
+          </section>
+        )}
+
         <button 
           onClick={onLogout}
           className="w-full p-4 bg-white text-red-500 rounded-3xl font-bold shadow-sm border border-slate-100 flex items-center justify-center gap-2 hover:bg-red-50 transition-colors"
@@ -1751,7 +1847,12 @@ function SettingsView({ user, onLogout, setModal, moods, avatars, updateMood, up
   );
 }
 
-function ChatView({ user, contact, onBack, setModal }: { user: UserProfile, contact: Contact, onBack: () => void, setModal: (m: any) => void }) {
+const ChatView: React.FC<{ 
+  user: UserProfile, 
+  contact: Contact, 
+  onBack: () => void, 
+  setModal: (m: any) => void 
+}> = ({ user, contact, onBack, setModal }) => {
   const [messages, setMessages] = useState<Message[]>([]);
   const [inputText, setInputText] = useState('');
   const [showEmoji, setShowEmoji] = useState(false);
@@ -1764,20 +1865,29 @@ function ChatView({ user, contact, onBack, setModal }: { user: UserProfile, cont
   useEffect(() => {
     setInputText('');
     setShowEmoji(false);
+    setMessages([]); // Clear messages when switching chats to avoid showing old ones
   }, [contactUid]);
 
   useEffect(() => {
-    if (!chatId || !user.uid || !contactUid) return;
+    if (!chatId || !user.uid || !contactUid) {
+      console.log(`[ChatView] Missing required IDs: chatId=${chatId}, user.uid=${user.uid}, contactUid=${contactUid}`);
+      return;
+    }
+    
+    console.log(`[ChatView] Subscribing to messages for chatId: ${chatId} (Contact: ${contact.name})`);
+    
+    let unsubscribe: () => void;
     const q = query(collection(db, 'chats', chatId, 'messages'), orderBy('timestamp', 'asc'));
-    const unsubscribe = onSnapshot(q, { includeMetadataChanges: true }, (snapshot) => {
+    
+    unsubscribe = onSnapshot(q, { includeMetadataChanges: true }, (snapshot) => {
       try {
         const newMessages = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as Message));
+        console.log(`[ChatView] Received ${newMessages.length} messages for ${chatId}`);
         setMessages(newMessages);
         
         // Update last message timestamp in contacts to clear notifications
         if (newMessages.length > 0) {
           const lastMsg = newMessages[newMessages.length - 1];
-          // Only clear if the last message was from the other person
           if (lastMsg.senderId !== user.uid) {
             setDoc(doc(db, 'users', user.uid, 'contacts', contactUid), { 
               hasUnread: false 
@@ -1787,8 +1897,24 @@ function ChatView({ user, contact, onBack, setModal }: { user: UserProfile, cont
       } catch (err) {
         console.error("Error processing messages snapshot:", err);
       }
-    }, (error) => handleFirestoreError(error, OperationType.LIST, `chats/${chatId}/messages`));
-    return () => unsubscribe();
+    }, (error) => {
+      console.warn("Firestore index error for messages, using fallback query:", error);
+      const fallbackQ = query(collection(db, 'chats', chatId, 'messages'));
+      unsubscribe = onSnapshot(fallbackQ, (snapshot) => {
+        const newMessages = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as Message))
+          .sort((a, b) => {
+            const tA = a.timestamp?.toMillis ? a.timestamp.toMillis() : (a.timestamp instanceof Date ? a.timestamp.getTime() : 0);
+            const tB = b.timestamp?.toMillis ? b.timestamp.toMillis() : (b.timestamp instanceof Date ? b.timestamp.getTime() : 0);
+            return tA - tB;
+          });
+        console.log(`[ChatView Fallback] Received ${newMessages.length} messages for ${chatId}`);
+        setMessages(newMessages);
+      }, (e) => handleFirestoreError(e, OperationType.LIST, `chats/${chatId}/messages`));
+    });
+    
+    return () => {
+      if (unsubscribe) unsubscribe();
+    };
   }, [chatId, user.uid, contactUid]);
 
   // Separate useEffect for scrolling to bottom
@@ -2062,7 +2188,7 @@ function ChatView({ user, contact, onBack, setModal }: { user: UserProfile, cont
   return (
     <motion.div 
       initial={{ x: 300, opacity: 0 }} animate={{ x: 0, opacity: 1 }} exit={{ x: 300, opacity: 0 }}
-      className="flex flex-col flex-1 bg-[#E5DDD5] h-full w-full overflow-hidden relative z-30"
+      className="flex flex-col flex-1 bg-[#E5DDD5] w-full overflow-hidden relative z-30 min-h-0"
     >
       <header className="p-4 bg-[#CE93D8] text-white flex items-center gap-4 shrink-0 shadow-md z-10">
         <button onClick={onBack} className="p-2 text-white md:hidden flex items-center gap-1">
@@ -2115,7 +2241,13 @@ function ChatView({ user, contact, onBack, setModal }: { user: UserProfile, cont
       </header>
 
       <div className="flex-1 p-4 overflow-y-auto flex flex-col gap-3 bg-slate-50 relative pb-10 min-h-0 overscroll-contain">
-        {messages.map((msg, index) => {
+        {messages.length === 0 ? (
+          <div className="flex-1 flex flex-col items-center justify-center text-slate-400 gap-2 opacity-50">
+            <MessageCircle className="w-12 h-12" />
+            <p className="text-sm font-medium">Nenhuma mensagem ainda.</p>
+            <p className="text-[10px]">Diga oi para começar!</p>
+          </div>
+        ) : messages.map((msg, index) => {
           const msgDate = msg.timestamp?.toDate ? msg.timestamp.toDate() : (msg.timestamp instanceof Date ? msg.timestamp : (msg.timestamp ? new Date(msg.timestamp) : new Date()));
           const prevMsg = index > 0 ? messages[index - 1] : null;
           const prevMsgDate = prevMsg?.timestamp?.toDate ? prevMsg.timestamp.toDate() : (prevMsg?.timestamp instanceof Date ? prevMsg.timestamp : (prevMsg?.timestamp ? new Date(prevMsg.timestamp) : null));
@@ -2156,6 +2288,17 @@ function ChatView({ user, contact, onBack, setModal }: { user: UserProfile, cont
                       <Phone className="w-4 h-4" />
                       Atender / Entrar
                     </button>
+                    <a 
+                      href={msg.meetUrl} 
+                      target="_blank" 
+                      rel="noopener noreferrer"
+                      className={cn(
+                        "text-[10px] text-center underline opacity-70 hover:opacity-100 mt-1 block",
+                        msg.senderId === user.uid ? "text-white" : "text-slate-500"
+                      )}
+                    >
+                      Entrar pelo navegador (sem app)
+                    </a>
                   </div>
                 ) : (
                   <p className={cn("text-sm break-words", (msg as any).isSOS && "font-bold text-red-600")}>
