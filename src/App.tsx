@@ -786,26 +786,28 @@ function ParentDashboard({ user, setView, setActiveChat, setModal }: { user: Use
   // Listen for parent's own contacts (friends/other parents)
   useEffect(() => {
     let unsubscribe: () => void;
+    // Remove orderBy from server query to ensure all contacts are visible even if lastMessageAt is missing
     const q = query(
       collection(db, 'users', user.uid, 'contacts'), 
-      where('approved', '==', true),
-      orderBy('lastMessageAt', 'desc')
+      where('approved', '==', true)
     );
     
     unsubscribe = onSnapshot(q, (snapshot) => {
-      setContacts(snapshot.docs.map(doc => {
+      const fetchedContacts = snapshot.docs.map(doc => {
         const data = doc.data();
         return { id: doc.id, uid: data.uid || doc.id, ...data } as Contact;
-      }));
+      });
+      
+      // Sort client-side
+      fetchedContacts.sort((a, b) => {
+        const tA = a.lastMessageAt?.toMillis ? a.lastMessageAt.toMillis() : (a.lastMessageAt instanceof Date ? a.lastMessageAt.getTime() : 0);
+        const tB = b.lastMessageAt?.toMillis ? b.lastMessageAt.toMillis() : (b.lastMessageAt instanceof Date ? b.lastMessageAt.getTime() : 0);
+        return tB - tA;
+      });
+      
+      setContacts(fetchedContacts);
     }, (error) => {
-      console.warn("Firestore index error for ParentDashboard, using fallback:", error);
-      const fallbackQ = query(collection(db, 'users', user.uid, 'contacts'), where('approved', '==', true));
-      unsubscribe = onSnapshot(fallbackQ, (s) => {
-        setContacts(s.docs.map(d => {
-          const data = d.data();
-          return { id: d.id, uid: data.uid || d.id, ...data } as Contact;
-        }));
-      }, (e) => handleFirestoreError(e, OperationType.LIST, 'users/contacts'));
+      handleFirestoreError(error, OperationType.LIST, 'users/contacts');
     });
     
     return () => {
@@ -927,26 +929,28 @@ function ChildDashboard({ user, setView, setActiveChat, setModal }: { user: User
 
   useEffect(() => {
     let unsubscribe: () => void;
+    // Remove orderBy from server query to ensure all contacts are visible
     const q = query(
       collection(db, 'users', user.uid, 'contacts'), 
-      where('approved', '==', true),
-      orderBy('lastMessageAt', 'desc')
+      where('approved', '==', true)
     );
     
     unsubscribe = onSnapshot(q, (snapshot) => {
-      setContacts(snapshot.docs.map(doc => {
+      const fetchedContacts = snapshot.docs.map(doc => {
         const data = doc.data();
         return { id: doc.id, uid: data.uid || doc.id, ...data } as Contact;
-      }));
+      });
+      
+      // Sort client-side
+      fetchedContacts.sort((a, b) => {
+        const tA = a.lastMessageAt?.toMillis ? a.lastMessageAt.toMillis() : (a.lastMessageAt instanceof Date ? a.lastMessageAt.getTime() : 0);
+        const tB = b.lastMessageAt?.toMillis ? b.lastMessageAt.toMillis() : (b.lastMessageAt instanceof Date ? b.lastMessageAt.getTime() : 0);
+        return tB - tA;
+      });
+      
+      setContacts(fetchedContacts);
     }, (error) => {
-      console.warn("Firestore index error for ChildDashboard, using fallback:", error);
-      const fallbackQ = query(collection(db, 'users', user.uid, 'contacts'), where('approved', '==', true));
-      unsubscribe = onSnapshot(fallbackQ, (s) => {
-        setContacts(s.docs.map(d => {
-          const data = d.data();
-          return { id: d.id, uid: data.uid || d.id, ...data } as Contact;
-        }));
-      }, (e) => handleFirestoreError(e, OperationType.LIST, 'users/contacts'));
+      handleFirestoreError(error, OperationType.LIST, 'users/contacts');
     });
 
     // Auto-add parent as contact if not present
@@ -1882,17 +1886,26 @@ const ChatView: React.FC<{
     console.log(`[ChatView] Subscribing to messages for chatId: ${chatId} (User: ${user.uid}, Contact: ${contactUid})`);
     
     let unsubscribe: () => void;
-    const q = query(collection(db, 'chats', chatId, 'messages'), orderBy('timestamp', 'asc'));
+    // Remove orderBy from server query to avoid issues with pending timestamps or missing indexes
+    const q = query(collection(db, 'chats', chatId, 'messages'));
     
     unsubscribe = onSnapshot(q, { includeMetadataChanges: true }, (snapshot) => {
       try {
-        const newMessages = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as Message));
-        console.log(`[ChatView] Received ${newMessages.length} messages for ${chatId}, fromCache: ${snapshot.metadata.fromCache}`);
-        setMessages(newMessages);
+        const fetchedMessages = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as Message));
+        
+        // Sort client-side
+        fetchedMessages.sort((a, b) => {
+          const tA = a.timestamp?.toMillis ? a.timestamp.toMillis() : (a.timestamp instanceof Date ? a.timestamp.getTime() : 0);
+          const tB = b.timestamp?.toMillis ? b.timestamp.toMillis() : (b.timestamp instanceof Date ? b.timestamp.getTime() : 0);
+          return tA - tB;
+        });
+        
+        console.log(`[ChatView] Received ${fetchedMessages.length} messages for ${chatId}, fromCache: ${snapshot.metadata.fromCache}`);
+        setMessages(fetchedMessages);
         
         // Update last message timestamp in contacts to clear notifications
-        if (newMessages.length > 0) {
-          const lastMsg = newMessages[newMessages.length - 1];
+        if (fetchedMessages.length > 0) {
+          const lastMsg = fetchedMessages[fetchedMessages.length - 1];
           if (lastMsg.senderId !== user.uid) {
             setDoc(doc(db, 'users', user.uid, 'contacts', contactUid), { 
               hasUnread: false 
@@ -1904,22 +1917,7 @@ const ChatView: React.FC<{
       }
     }, (error) => {
       console.error("[ChatView] Firestore error for messages:", error);
-      if (error.code === 'failed-precondition') {
-        console.warn("Firestore index error for messages, using fallback query.");
-        const fallbackQ = query(collection(db, 'chats', chatId, 'messages'));
-        unsubscribe = onSnapshot(fallbackQ, { includeMetadataChanges: true }, (snapshot) => {
-          const newMessages = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as Message))
-            .sort((a, b) => {
-              const tA = a.timestamp?.toMillis ? a.timestamp.toMillis() : (a.timestamp instanceof Date ? a.timestamp.getTime() : 0);
-              const tB = b.timestamp?.toMillis ? b.timestamp.toMillis() : (b.timestamp instanceof Date ? b.timestamp.getTime() : 0);
-              return tA - tB;
-            });
-          console.log(`[ChatView Fallback] Received ${newMessages.length} messages for ${chatId}, fromCache: ${snapshot.metadata.fromCache}`);
-          setMessages(newMessages);
-        }, (e) => handleFirestoreError(e, OperationType.LIST, `chats/${chatId}/messages`));
-      } else {
-        handleFirestoreError(error, OperationType.LIST, `chats/${chatId}/messages`);
-      }
+      handleFirestoreError(error, OperationType.LIST, `chats/${chatId}/messages`);
     });
     
     return () => {
