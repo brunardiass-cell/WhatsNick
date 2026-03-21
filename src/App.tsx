@@ -1,9 +1,9 @@
 import React, { useState, useEffect, useRef, Component } from 'react';
 import { 
   auth, db, googleProvider, signInWithPopup, signOut, onAuthStateChanged,
-  collection, doc, setDoc, getDoc, getDocs, query, where, onSnapshot, addDoc, orderBy, serverTimestamp, deleteDoc
+  collection, doc, setDoc, getDoc, getDocs, query, where, onSnapshot, addDoc, orderBy, serverTimestamp, deleteDoc, updateDoc
 } from './firebase';
-import { UserProfile, Contact, Message, SOSAlert, UserRole } from './types';
+import { UserProfile, Contact, Message, SOSAlert, PendingInvite, UserRole } from './types';
 import { cn } from './utils';
 import { 
   MessageCircle, Shield, Phone, Camera, Send, AlertTriangle, 
@@ -98,6 +98,9 @@ export default function App() {
   const [activeTab, setActiveTab] = useState<'chats' | 'calls' | 'family' | 'settings'>('chats');
   const [modal, setModal] = useState<{ type: 'confirm' | 'alert', title: string, message: string, onConfirm?: () => void } | null>(null);
   const [showMoodPrompt, setShowMoodPrompt] = useState(false);
+  const [pendingInvites, setPendingInvites] = useState<PendingInvite[]>([]);
+  const [showAddFriendModal, setShowAddFriendModal] = useState(false);
+  const [friendEmailInput, setFriendEmailInput] = useState('');
 
   const MOODS = [
     { label: 'Feliz', emoji: '😊' },
@@ -144,31 +147,42 @@ export default function App() {
 
             if (view === 'login' || view === 'role-select') setView('main');
             
-            // Check for pending contacts (only once or when needed)
-            const q = query(collection(db, 'pending_contacts'), where('targetEmail', '==', firebaseUser.email));
-            const snapshot = await getDocs(q);
-            snapshot.forEach(async (inviteDoc) => {
-              const invite = inviteDoc.data();
-              await setDoc(doc(db, 'users', firebaseUser.uid, 'contacts', invite.fromUid), {
-                uid: invite.fromUid,
-                name: invite.fromName,
-                photoURL: invite.fromPhoto,
-                approved: true,
-                childId: firebaseUser.uid,
-                meetAuthorized: false
-              });
-              await setDoc(doc(db, 'users', invite.fromUid, 'contacts', firebaseUser.uid), {
-                uid: firebaseUser.uid,
-                name: userData.name,
-                photoURL: userData.photoURL || '',
-                approved: true,
-                childId: invite.fromUid,
-                meetAuthorized: false
-              });
-              const emailKey = `email_${firebaseUser.email?.replace(/\./g, '_')}`;
-              await deleteDoc(doc(db, 'users', invite.fromUid, 'contacts', emailKey)).catch(() => {});
-              await deleteDoc(doc(db, 'pending_contacts', inviteDoc.id));
+            // Real-time listener for incoming pending invites
+            const qInvites = query(collection(db, 'pending_contacts'), where('targetEmail', '==', firebaseUser.email));
+            const unsubInvites = onSnapshot(qInvites, (snapshot) => {
+              setPendingInvites(snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as PendingInvite)));
             });
+
+            // Real-time listener for sent invites that were accepted
+            const qSent = query(collection(db, 'pending_contacts'), where('fromUid', '==', firebaseUser.uid), where('accepted', '==', true));
+            const unsubSent = onSnapshot(qSent, (snapshot) => {
+              snapshot.docs.forEach(async (inviteDoc) => {
+                const invite = inviteDoc.data() as PendingInvite;
+                // Find the user profile for the target email
+                const qUser = query(collection(db, 'users'), where('email', '==', invite.targetEmail));
+                const userSnapshot = await getDocs(qUser);
+                if (!userSnapshot.empty) {
+                  const targetUser = userSnapshot.docs[0].data() as UserProfile;
+                  // Add to current user's contacts
+                  await setDoc(doc(db, 'users', firebaseUser.uid, 'contacts', targetUser.uid), {
+                    uid: targetUser.uid,
+                    name: targetUser.name,
+                    photoURL: targetUser.photoURL || '',
+                    approved: true,
+                    childId: firebaseUser.uid,
+                    meetAuthorized: false,
+                    lastMessageAt: serverTimestamp()
+                  });
+                }
+                // Delete the invite
+                await deleteDoc(doc(db, 'pending_contacts', inviteDoc.id));
+              });
+            });
+
+            return () => {
+              if (unsubInvites) unsubInvites();
+              if (unsubSent) unsubSent();
+            };
           } else {
             setView('role-select');
           }
@@ -262,6 +276,65 @@ export default function App() {
     }
   };
 
+  const sendInvite = async (email: string) => {
+    if (!user || !email) return;
+    try {
+      // Check if already invited
+      const q = query(collection(db, 'pending_contacts'), where('targetEmail', '==', email), where('fromUid', '==', user.uid));
+      const snapshot = await getDocs(q);
+      if (!snapshot.empty) {
+        setModal({ title: 'Aviso', message: 'Convite já enviado para este email.', type: 'alert' });
+        return;
+      }
+
+      await addDoc(collection(db, 'pending_contacts'), {
+        targetEmail: email,
+        fromUid: user.uid,
+        fromName: user.name,
+        fromPhoto: user.photoURL || '',
+        timestamp: serverTimestamp()
+      });
+      setFriendEmailInput('');
+      setShowAddFriendModal(false);
+      setModal({ title: 'Sucesso!', message: 'Convite enviado! Assim que a pessoa aceitar, vocês poderão conversar.', type: 'alert' });
+    } catch (error) {
+      handleFirestoreError(error, OperationType.WRITE, 'pending_contacts');
+    }
+  };
+
+  const acceptInvite = async (invite: PendingInvite) => {
+    if (!user) return;
+    try {
+      // Add to current user's contacts
+      await setDoc(doc(db, 'users', user.uid, 'contacts', invite.fromUid), {
+        uid: invite.fromUid,
+        name: invite.fromName,
+        photoURL: invite.fromPhoto || '',
+        approved: true,
+        childId: user.uid,
+        meetAuthorized: false,
+        lastMessageAt: serverTimestamp()
+      });
+
+      // Update invite to accepted
+      await updateDoc(doc(db, 'pending_contacts', invite.id), {
+        accepted: true
+      });
+
+      setModal({ title: 'Sucesso!', message: `Agora você e ${invite.fromName} são amigos!`, type: 'alert' });
+    } catch (error) {
+      handleFirestoreError(error, OperationType.WRITE, 'contacts');
+    }
+  };
+
+  const declineInvite = async (inviteId: string) => {
+    try {
+      await deleteDoc(doc(db, 'pending_contacts', inviteId));
+    } catch (error) {
+      handleFirestoreError(error, OperationType.DELETE, `pending_contacts/${inviteId}`);
+    }
+  };
+
   if (loading) {
     return (
       <div className="flex items-center justify-center min-h-screen bg-white">
@@ -342,6 +415,10 @@ export default function App() {
                 avatars={AVATARS}
                 updateMood={updateMood}
                 updateProfilePhoto={updateProfilePhoto}
+                pendingInvites={pendingInvites}
+                acceptInvite={acceptInvite}
+                declineInvite={declineInvite}
+                setShowAddFriendModal={setShowAddFriendModal}
               />
             </div>
             <div className={cn(
@@ -411,12 +488,49 @@ export default function App() {
           </div>
         )}
       </AnimatePresence>
+      {/* Add Friend Modal */}
+      <AnimatePresence>
+        {showAddFriendModal && (
+          <div className="fixed inset-0 bg-black/50 flex items-center justify-center p-6 z-[100]">
+            <motion.div 
+              initial={{ scale: 0.9, opacity: 0 }} 
+              animate={{ scale: 1, opacity: 1 }} 
+              exit={{ scale: 0.9, opacity: 0 }}
+              className="bg-white w-full max-w-xs rounded-2xl p-6 shadow-2xl"
+            >
+              <h3 className="text-lg font-bold mb-2">Adicionar Amigo</h3>
+              <p className="text-slate-600 mb-4 text-sm">Digite o email do seu amigo para enviar um convite.</p>
+              <input 
+                type="email" 
+                value={friendEmailInput}
+                onChange={(e) => setFriendEmailInput(e.target.value)}
+                placeholder="email@exemplo.com"
+                className="w-full p-3 bg-slate-50 rounded-xl mb-6 outline-none border-2 border-transparent focus:border-[#F48FB1]"
+              />
+              <div className="flex justify-end gap-3">
+                <button 
+                  onClick={() => setShowAddFriendModal(false)}
+                  className="px-4 py-2 text-slate-500 font-bold"
+                >
+                  Cancelar
+                </button>
+                <button 
+                  onClick={() => sendInvite(friendEmailInput)}
+                  className="px-4 py-2 bg-[#F48FB1] text-white rounded-xl font-bold"
+                >
+                  Enviar
+                </button>
+              </div>
+            </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
     </div>
     </ErrorBoundary>
   );
 }
 
-function MainLayout({ user, activeTab, setActiveTab, setView, setActiveChat, setModal, moods, avatars, updateMood, updateProfilePhoto }: any) {
+function MainLayout({ user, activeTab, setActiveTab, setView, setActiveChat, setModal, moods, avatars, updateMood, updateProfilePhoto, pendingInvites, acceptInvite, declineInvite, setShowAddFriendModal }: any) {
   return (
     <div className="flex flex-col md:flex-row h-full bg-white w-full">
       {/* Sidebar Navigation (Desktop) / Bottom Navigation (Mobile) */}
@@ -429,6 +543,7 @@ function MainLayout({ user, activeTab, setActiveTab, setView, setActiveChat, set
             label="Conversas" 
             badge={true}
             user={user}
+            inviteBadge={pendingInvites.length > 0}
           />
           <NavButton 
             active={activeTab === 'calls'} 
@@ -467,8 +582,8 @@ function MainLayout({ user, activeTab, setActiveTab, setView, setActiveChat, set
         <div className="flex-1 overflow-y-auto">
           {activeTab === 'chats' && (
             user.role === 'parent' 
-              ? <ParentDashboard user={user} setView={setView} setActiveChat={setActiveChat} setModal={setModal} />
-              : <ChildDashboard user={user} setView={setView} setActiveChat={setActiveChat} setModal={setModal} />
+              ? <ParentDashboard user={user} setView={setView} setActiveChat={setActiveChat} setModal={setModal} pendingInvites={pendingInvites} acceptInvite={acceptInvite} declineInvite={declineInvite} setShowAddFriendModal={setShowAddFriendModal} />
+              : <ChildDashboard user={user} setView={setView} setActiveChat={setActiveChat} setModal={setModal} pendingInvites={pendingInvites} acceptInvite={acceptInvite} declineInvite={declineInvite} setShowAddFriendModal={setShowAddFriendModal} />
           )}
           {activeTab === 'calls' && <CallsView user={user} setActiveChat={setActiveChat} setView={setView} setModal={setModal} />}
           {activeTab === 'family' && <FamilyView user={user} setModal={setModal} setView={setView} setActiveChat={setActiveChat} />}
@@ -602,7 +717,7 @@ function AlertsView({ user, setModal }: { user: UserProfile, setModal: (m: any) 
   );
 }
 
-function NavButton({ active, onClick, icon, label, badge, sosBadge, user }: any) {
+function NavButton({ active, onClick, icon, label, badge, sosBadge, user, inviteBadge }: any) {
   const [unreadCount, setUnreadCount] = useState(0);
   const [sosCount, setSosCount] = useState(0);
 
@@ -653,11 +768,11 @@ function NavButton({ active, onClick, icon, label, badge, sosBadge, user }: any)
         {icon}
       </div>
       <span className="text-[10px] font-bold uppercase tracking-tighter md:hidden lg:block">{label}</span>
-      {badge && unreadCount > 0 && (
+      {(badge && unreadCount > 0) || inviteBadge ? (
         <span className="absolute top-1 right-1 w-5 h-5 bg-[#F48FB1] text-white text-[10px] font-bold rounded-full flex items-center justify-center border-2 border-white animate-bounce">
-          {unreadCount}
+          {unreadCount || '!'}
         </span>
-      )}
+      ) : null}
       {sosBadge && sosCount > 0 && (
         <span className="absolute top-1 right-1 w-5 h-5 bg-red-500 text-white text-[10px] font-bold rounded-full flex items-center justify-center border-2 border-white animate-pulse">
           {sosCount}
@@ -738,7 +853,7 @@ function RoleSelectView({ onSelect }: { onSelect: (role: UserRole) => void }) {
   );
 }
 
-function ParentDashboard({ user, setView, setActiveChat, setModal }: { user: UserProfile, setView: (v: any) => void, setActiveChat: (c: any) => void, setModal: (m: any) => void }) {
+function ParentDashboard({ user, setView, setActiveChat, setModal, pendingInvites, acceptInvite, declineInvite, setShowAddFriendModal }: any) {
   const [contacts, setContacts] = useState<Contact[]>([]);
 
   // Listen for parent's own contacts (friends/other parents)
@@ -777,12 +892,37 @@ function ParentDashboard({ user, setView, setActiveChat, setModal }: { user: Use
           <h1 className="text-xl font-bold">Conversas</h1>
           <p className="text-sm opacity-80">Olá, {user.name}</p>
         </div>
-        <button onClick={() => signOut(auth)} className="p-2 text-white/60 hover:text-white">
-          <LogOut className="w-6 h-6" />
+        <button onClick={() => setShowAddFriendModal(true)} className="p-2 bg-white/20 rounded-xl">
+          <UserPlus className="w-6 h-6" />
         </button>
       </header>
 
       <main className="flex-1 p-6 overflow-y-auto">
+        {pendingInvites.length > 0 && (
+          <div className="mb-8">
+            <h3 className="text-sm font-bold text-slate-500 uppercase tracking-wider mb-3">Convites Pendentes</h3>
+            <div className="space-y-3">
+              {pendingInvites.map((invite: any) => (
+                <div key={invite.id} className="bg-white p-4 rounded-2xl shadow-sm border border-[#F48FB1]/20 flex items-center gap-3">
+                  <img src={invite.fromPhoto || `https://api.dicebear.com/7.x/avataaars/svg?seed=${invite.fromUid}`} className="w-10 h-10 rounded-full" alt="" />
+                  <div className="flex-1">
+                    <p className="text-sm font-bold text-slate-800">{invite.fromName}</p>
+                    <p className="text-[10px] text-slate-400">Quer ser seu amigo</p>
+                  </div>
+                  <div className="flex gap-2">
+                    <button onClick={() => acceptInvite(invite)} className="p-2 bg-green-500 text-white rounded-lg">
+                      <Check className="w-4 h-4" />
+                    </button>
+                    <button onClick={() => declineInvite(invite.id)} className="p-2 bg-red-500 text-white rounded-lg">
+                      <X className="w-4 h-4" />
+                    </button>
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+
         <h2 className="text-lg font-bold text-slate-700 mb-6">Minhas Conversas</h2>
 
         {contacts.length === 0 ? (
@@ -876,7 +1016,7 @@ const ChildCard: React.FC<ChildCardProps> = ({ child, onChat, onManage }) => {
   );
 };
 
-function ChildDashboard({ user, setView, setActiveChat, setModal }: { user: UserProfile, setView: (v: any) => void, setActiveChat: (c: any) => void, setModal: (m: any) => void }) {
+function ChildDashboard({ user, setView, setActiveChat, setModal, pendingInvites, acceptInvite, declineInvite, setShowAddFriendModal }: any) {
   const [contacts, setContacts] = useState<Contact[]>([]);
 
   useEffect(() => {
@@ -938,12 +1078,42 @@ function ChildDashboard({ user, setView, setActiveChat, setModal }: { user: User
           </div>
           <h1 className="text-2xl font-bold">Olá, {user.name}!</h1>
         </div>
-        <button onClick={() => setView('sos')} className="w-12 h-12 bg-red-500 text-white rounded-2xl shadow-lg flex items-center justify-center animate-pulse">
-          <AlertTriangle className="w-6 h-6" />
-        </button>
+        <div className="flex gap-2">
+          <button onClick={() => setShowAddFriendModal(true)} className="w-12 h-12 bg-white/20 text-white rounded-2xl flex items-center justify-center">
+            <UserPlus className="w-6 h-6" />
+          </button>
+          <button onClick={() => setView('sos')} className="w-12 h-12 bg-red-500 text-white rounded-2xl shadow-lg flex items-center justify-center animate-pulse">
+            <AlertTriangle className="w-6 h-6" />
+          </button>
+        </div>
       </header>
 
       <main className="flex-1 p-6 overflow-y-auto">
+        {pendingInvites.length > 0 && (
+          <div className="mb-8">
+            <h3 className="text-sm font-bold text-slate-500 uppercase tracking-wider mb-3">Convites Pendentes</h3>
+            <div className="space-y-3">
+              {pendingInvites.map((invite: any) => (
+                <div key={invite.id} className="bg-white p-4 rounded-3xl shadow-md border-2 border-[#F48FB1]/20 flex items-center gap-3">
+                  <img src={invite.fromPhoto || `https://api.dicebear.com/7.x/avataaars/svg?seed=${invite.fromUid}`} className="w-12 h-12 rounded-full" alt="" />
+                  <div className="flex-1">
+                    <p className="font-bold text-slate-800">{invite.fromName}</p>
+                    <p className="text-[10px] text-slate-500">Quer ser seu amigo!</p>
+                  </div>
+                  <div className="flex gap-2">
+                    <button onClick={() => acceptInvite(invite)} className="p-3 bg-green-500 text-white rounded-2xl shadow-sm">
+                      <Check className="w-5 h-5" />
+                    </button>
+                    <button onClick={() => declineInvite(invite.id)} className="p-3 bg-red-500 text-white rounded-2xl shadow-sm">
+                      <X className="w-5 h-5" />
+                    </button>
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+
         <h2 className="text-lg font-bold text-slate-800 mb-4">Meus Amigos</h2>
         
         <div className="grid grid-cols-2 gap-4">

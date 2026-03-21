@@ -90,12 +90,12 @@ service cloud.firestore {
 
     function isValidUser(data) {
       return hasRequiredFields(['uid', 'name', 'role']) &&
-             data.uid is string && data.uid.size() > 0 &&
+             data.uid is string && data.uid.size() > 0 && data.uid.size() < 128 &&
              data.name is string && data.name.size() > 0 && data.name.size() < 100 &&
              data.role in ['parent', 'child', 'admin'] &&
              (!('email' in data) || (data.email is string && data.email.size() < 100)) &&
-             (!('parentId' in data) || (data.parentId is string && data.parentId.size() > 0)) &&
-             (!('photoURL' in data) || (data.photoURL is string && data.photoURL.size() < 2000000)) && // Increased for base64
+             (!('parentId' in data) || (data.parentId is string && data.parentId.size() < 128)) &&
+             (!('photoURL' in data) || (data.photoURL is string && data.photoURL.size() < 2000000)) &&
              (!('mood' in data) || (data.mood is string && data.mood.size() < 50)) &&
              (!('moodEmoji' in data) || (data.moodEmoji is string && data.moodEmoji.size() < 20));
     }
@@ -116,7 +116,9 @@ service cloud.firestore {
     function isValidPendingContact(data) {
       return hasRequiredFields(['targetEmail', 'fromUid', 'fromName', 'timestamp']) &&
              data.targetEmail is string && data.fromUid is string &&
-             data.fromName is string && data.timestamp is timestamp;
+             data.fromName is string && data.timestamp is timestamp &&
+             (!('fromPhoto' in data) || (data.fromPhoto is string && data.fromPhoto.size() < 2000)) &&
+             (!('accepted' in data) || data.accepted is bool);
     }
 
     function isValidMessage(data) {
@@ -146,10 +148,12 @@ service cloud.firestore {
     // ===============================================================
 
     match /users/{userId} {
-      allow read: if isAuthenticated(); // Allow users to find each other by email
+      allow read: if isAuthenticated(); 
       allow create: if isAuthenticated() && isValidUser(request.resource.data) && (request.auth.uid == userId);
       allow update: if isAuthenticated() && isValidUser(request.resource.data) && 
-                    (isOwner(userId) || isParentOf(userId) || isAdmin());
+                    (isOwner(userId) || isParentOf(userId) || isAdmin()) &&
+                    request.resource.data.uid == resource.data.uid &&
+                    (request.resource.data.role == resource.data.role || isAdmin());
 
       match /contacts/{contactId} {
         allow read: if isOwner(userId) || isParentOf(userId) || isAdmin();
@@ -161,9 +165,12 @@ service cloud.firestore {
     }
 
     match /pending_contacts/{inviteId} {
-      allow read: if isAuthenticated() && (request.auth.token.email == resource.data.targetEmail || isAdmin());
-      allow create: if isAuthenticated() && isValidPendingContact(request.resource.data);
-      allow delete: if isAuthenticated() && (request.auth.token.email == resource.data.targetEmail || isAdmin());
+      allow read: if isAuthenticated() && (request.auth.token.email == resource.data.targetEmail || request.auth.uid == resource.data.fromUid || isAdmin());
+      allow create: if isAuthenticated() && isValidPendingContact(request.resource.data) && request.resource.data.fromUid == request.auth.uid;
+      allow update: if isAuthenticated() && (request.auth.token.email == resource.data.targetEmail) && 
+                    request.resource.data.diff(resource.data).affectedKeys().hasOnly(['accepted']) &&
+                    request.resource.data.accepted == true;
+      allow delete: if isAuthenticated() && (request.auth.token.email == resource.data.targetEmail || request.auth.uid == resource.data.fromUid || isAdmin());
     }
 
     match /chats/{chatId} {
