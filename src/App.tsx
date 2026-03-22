@@ -325,9 +325,10 @@ export default function App() {
         childId: user.uid,
         meetAuthorized: false,
         lastMessageAt: serverTimestamp()
-      });
+      }, { merge: true });
 
       // 2. Add me to sender's contacts (Reciprocal)
+      // This works because the rules allow self-creation in someone else's list
       await setDoc(doc(db, 'users', invite.fromUid, 'contacts', user.uid), {
         uid: user.uid,
         name: user.name,
@@ -336,7 +337,7 @@ export default function App() {
         childId: invite.fromUid,
         meetAuthorized: false,
         lastMessageAt: serverTimestamp()
-      });
+      }, { merge: true });
 
       // 3. Mark invite as accepted
       await updateDoc(doc(db, 'pending_contacts', invite.id), {
@@ -346,6 +347,11 @@ export default function App() {
       setModal({ title: 'Sucesso!', message: `Agora você e ${invite.fromName} são amigos!`, type: 'alert' });
     } catch (error) {
       handleFirestoreError(error, OperationType.WRITE, 'contacts');
+      setModal({ 
+        title: 'Erro ao aceitar', 
+        message: 'Não foi possível aceitar o convite. Tente novamente mais tarde.', 
+        type: 'alert' 
+      });
     }
   };
 
@@ -1940,10 +1946,12 @@ function ChatView({ user, contact, onBack, setModal }: { user: UserProfile, cont
   }, [chatId, user.uid, contactUid]);
 
   const sendMessage = async () => {
-    if (!inputText.trim()) return;
+    if (!inputText.trim() || !contactUid) return;
     const text = inputText;
+    const currentInput = inputText;
     setInputText('');
     setShowEmoji(false);
+    
     try {
       const messageData = {
         senderId: user.uid,
@@ -1957,6 +1965,7 @@ function ChatView({ user, contact, onBack, setModal }: { user: UserProfile, cont
       await addDoc(collection(db, 'chats', chatId, 'messages'), messageData);
       
       // Update lastMessageAt and hasUnread for receiver
+      // We use merge: true to avoid overwriting existing contact fields like 'approved'
       await setDoc(doc(db, 'users', contactUid, 'contacts', user.uid), {
         uid: user.uid,
         name: user.name,
@@ -1975,7 +1984,14 @@ function ChatView({ user, contact, onBack, setModal }: { user: UserProfile, cont
       }, { merge: true });
 
     } catch (error) {
+      // Restore input text on error so user doesn't lose their message
+      setInputText(currentInput);
       handleFirestoreError(error, OperationType.WRITE, `chats/${chatId}/messages`);
+      setModal({ 
+        title: 'Erro ao enviar', 
+        message: 'Não foi possível enviar sua mensagem. Verifique sua conexão ou tente novamente.', 
+        type: 'alert' 
+      });
     }
   };
 

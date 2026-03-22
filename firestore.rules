@@ -124,6 +124,7 @@ service cloud.firestore {
     function isValidMessage(data) {
       return hasRequiredFields(['senderId', 'receiverId', 'mediaType', 'timestamp']) &&
              data.senderId is string && data.receiverId is string &&
+             (data.timestamp is timestamp || data.timestamp == null) &&
              data.mediaType in ['text', 'image', 'call'] &&
              (!('text' in data) || (data.text is string && data.text.size() < 5000)) &&
              (!('mediaUrl' in data) || (data.mediaUrl is string && data.mediaUrl.size() < 1048487)) &&
@@ -140,7 +141,7 @@ service cloud.firestore {
       return isAuthenticated() && 
              request.auth.uid == contactId && 
              request.resource.data.diff(resource.data).affectedKeys()
-               .hasOnly(['photoURL', 'mood', 'moodEmoji', 'lastMessageAt', 'hasUnread', 'lastMessageText']);
+               .hasOnly(['photoURL', 'mood', 'moodEmoji', 'lastMessageAt', 'hasUnread', 'lastMessageText', 'name', 'uid', 'approved', 'childId', 'meetAuthorized']);
     }
 
     // ===============================================================
@@ -157,9 +158,9 @@ service cloud.firestore {
 
       match /contacts/{contactId} {
         allow read: if isOwner(userId) || isParentOf(userId) || isAdmin();
-        allow create: if (isOwner(userId) || isParentOf(userId) || isAdmin()) && isValidContact(request.resource.data);
+        allow create: if (isOwner(userId) || isParentOf(userId) || isAdmin() || (isAuthenticated() && request.auth.uid == contactId)) && isValidContact(request.resource.data);
         allow update: if ((isOwner(userId) || isParentOf(userId) || isAdmin()) && isValidContact(request.resource.data)) || 
-                      isContactSelfUpdate(contactId);
+                      (isContactSelfUpdate(contactId) && isValidContact(request.resource.data));
         allow delete: if isOwner(userId) || isParentOf(userId) || isAdmin();
       }
     }
