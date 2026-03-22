@@ -1953,6 +1953,12 @@ function ChatView({ user, contact, onBack, setModal }: { user: UserProfile, cont
 
   const sendMessage = async () => {
     if (!inputText.trim() || !contactUid) return;
+    if (!user || !user.uid) {
+      console.error("Cannot send message: User is not authenticated or profile is missing", user);
+      setModal({ title: 'Erro', message: 'Você precisa estar logado para enviar mensagens.', type: 'alert' });
+      return;
+    }
+    
     const text = inputText;
     const currentInput = inputText;
     setInputText('');
@@ -1967,8 +1973,11 @@ function ChatView({ user, contact, onBack, setModal }: { user: UserProfile, cont
         timestamp: serverTimestamp()
       };
       
+      console.log("Attempting to send message to chatId:", chatId, messageData);
+      
       // Add message
-      await addDoc(collection(db, 'chats', chatId, 'messages'), messageData);
+      const msgRef = await addDoc(collection(db, 'chats', chatId, 'messages'), messageData);
+      console.log("Message saved successfully with ID:", msgRef.id);
       
       // Update lastMessageAt and hasUnread for receiver
       // We use merge: true to avoid overwriting existing contact fields like 'approved'

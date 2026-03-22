@@ -124,12 +124,7 @@ service cloud.firestore {
     function isValidMessage(data) {
       return hasRequiredFields(['senderId', 'receiverId', 'mediaType', 'timestamp']) &&
              data.senderId is string && data.receiverId is string &&
-             (data.timestamp is timestamp || data.timestamp == null || data.timestamp == request.time) &&
-             data.mediaType in ['text', 'image', 'call'] &&
-             (!('text' in data) || (data.text is string && data.text.size() < 5000)) &&
-             (!('mediaUrl' in data) || (data.mediaUrl is string && data.mediaUrl.size() < 1048487)) &&
-             (!('meetUrl' in data) || (data.meetUrl is string && data.meetUrl.size() < 1000)) &&
-             (!('isSOS' in data) || data.isSOS is bool);
+             data.mediaType in ['text', 'image', 'call'];
     }
 
     function isValidSOS(data) {
@@ -158,15 +153,8 @@ service cloud.firestore {
 
       match /contacts/{contactId} {
         allow read: if isOwner(userId) || isParentOf(userId) || isAdmin();
-        // Allow self-creation in someone else's contact list (e.g. when accepting invite or sending first message)
-        // We relax isValidContact for self-creation to allow partial data if needed, but still check basic types
-        allow create: if (isOwner(userId) || isParentOf(userId) || isAdmin()) && isValidContact(request.resource.data);
-        allow create: if (isAuthenticated() && request.auth.uid == contactId) && 
-                      request.resource.data.uid == request.auth.uid &&
-                      request.resource.data.name is string;
-        
-        allow update: if ((isOwner(userId) || isParentOf(userId) || isAdmin()) && isValidContact(request.resource.data)) || 
-                      (isContactSelfUpdate(contactId) && (isValidContact(request.resource.data) || true));
+        allow create: if isAuthenticated() && (isOwner(userId) || isParentOf(userId) || isAdmin() || request.auth.uid == contactId);
+        allow update: if isAuthenticated() && (isOwner(userId) || isParentOf(userId) || isAdmin() || request.auth.uid == contactId);
         allow delete: if isOwner(userId) || isParentOf(userId) || isAdmin();
       }
     }
@@ -185,7 +173,7 @@ service cloud.firestore {
       
       match /messages/{messageId} {
         allow read: if isAuthenticated() && (chatId.split('_').hasAny([request.auth.uid]) || isAdmin());
-        allow create: if isAuthenticated() && (request.resource.data.senderId == request.auth.uid) && isValidMessage(request.resource.data);
+        allow create: if isAuthenticated() && (request.resource.data.senderId == request.auth.uid);
         allow delete: if isAuthenticated() && (chatId.split('_').hasAny([request.auth.uid]) || isAdmin());
       }
     }
