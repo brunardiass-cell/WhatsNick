@@ -90,12 +90,12 @@ service cloud.firestore {
 
     function isValidUser(data) {
       return hasRequiredFields(['uid', 'name', 'role']) &&
-             data.uid is string && data.uid.size() > 0 && data.uid.size() < 128 &&
+             data.uid is string && data.uid.size() > 0 &&
              data.name is string && data.name.size() > 0 && data.name.size() < 100 &&
              data.role in ['parent', 'child', 'admin'] &&
              (!('email' in data) || (data.email is string && data.email.size() < 100)) &&
-             (!('parentId' in data) || (data.parentId is string && data.parentId.size() < 128)) &&
-             (!('photoURL' in data) || (data.photoURL is string && data.photoURL.size() < 2000000)) &&
+             (!('parentId' in data) || (data.parentId is string && data.parentId.size() > 0)) &&
+             (!('photoURL' in data) || (data.photoURL is string && data.photoURL.size() < 2000000)) && // Increased for base64
              (!('mood' in data) || (data.mood is string && data.mood.size() < 50)) &&
              (!('moodEmoji' in data) || (data.moodEmoji is string && data.moodEmoji.size() < 20));
     }
@@ -116,15 +116,17 @@ service cloud.firestore {
     function isValidPendingContact(data) {
       return hasRequiredFields(['targetEmail', 'fromUid', 'fromName', 'timestamp']) &&
              data.targetEmail is string && data.fromUid is string &&
-             data.fromName is string && data.timestamp is timestamp &&
-             (!('fromPhoto' in data) || (data.fromPhoto is string && data.fromPhoto.size() < 2000)) &&
-             (!('accepted' in data) || data.accepted is bool);
+             data.fromName is string && data.timestamp is timestamp;
     }
 
     function isValidMessage(data) {
       return hasRequiredFields(['senderId', 'receiverId', 'mediaType', 'timestamp']) &&
              data.senderId is string && data.receiverId is string &&
-             data.mediaType in ['text', 'image', 'call'];
+             data.mediaType in ['text', 'image', 'call'] &&
+             (!('text' in data) || (data.text is string && data.text.size() < 5000)) &&
+             (!('mediaUrl' in data) || (data.mediaUrl is string && data.mediaUrl.size() < 1048487)) &&
+             (!('meetUrl' in data) || (data.meetUrl is string && data.meetUrl.size() < 1000)) &&
+             (!('isSOS' in data) || data.isSOS is bool);
     }
 
     function isValidSOS(data) {
@@ -136,7 +138,7 @@ service cloud.firestore {
       return isAuthenticated() && 
              request.auth.uid == contactId && 
              request.resource.data.diff(resource.data).affectedKeys()
-               .hasOnly(['photoURL', 'mood', 'moodEmoji', 'lastMessageAt', 'hasUnread', 'lastMessageText', 'name', 'uid', 'approved', 'childId', 'meetAuthorized']);
+               .hasOnly(['photoURL', 'mood', 'moodEmoji', 'lastMessageAt', 'hasUnread', 'lastMessageText']);
     }
 
     // ===============================================================
@@ -144,37 +146,33 @@ service cloud.firestore {
     // ===============================================================
 
     match /users/{userId} {
-      allow read: if isAuthenticated(); 
+      allow read: if isAuthenticated(); // Allow users to find each other by email
       allow create: if isAuthenticated() && isValidUser(request.resource.data) && (request.auth.uid == userId);
       allow update: if isAuthenticated() && isValidUser(request.resource.data) && 
-                    (isOwner(userId) || isParentOf(userId) || isAdmin()) &&
-                    request.resource.data.uid == resource.data.uid &&
-                    (request.resource.data.role == resource.data.role || isAdmin());
+                    (isOwner(userId) || isParentOf(userId) || isAdmin());
 
       match /contacts/{contactId} {
         allow read: if isOwner(userId) || isParentOf(userId) || isAdmin();
-        allow create: if isAuthenticated() && (isOwner(userId) || isParentOf(userId) || isAdmin() || request.auth.uid == contactId);
-        allow update: if isAuthenticated() && (isOwner(userId) || isParentOf(userId) || isAdmin() || request.auth.uid == contactId);
+        allow create: if (isOwner(userId) || isParentOf(userId) || isAdmin()) && isValidContact(request.resource.data);
+        allow update: if ((isOwner(userId) || isParentOf(userId) || isAdmin()) && isValidContact(request.resource.data)) || 
+                      isContactSelfUpdate(contactId);
         allow delete: if isOwner(userId) || isParentOf(userId) || isAdmin();
       }
     }
 
     match /pending_contacts/{inviteId} {
-      allow read: if isAuthenticated() && (request.auth.token.email == resource.data.targetEmail || request.auth.uid == resource.data.fromUid || isAdmin());
-      allow create: if isAuthenticated() && isValidPendingContact(request.resource.data) && request.resource.data.fromUid == request.auth.uid;
-      allow update: if isAuthenticated() && (request.auth.token.email == resource.data.targetEmail) && 
-                    request.resource.data.diff(resource.data).affectedKeys().hasOnly(['accepted']) &&
-                    request.resource.data.accepted == true;
-      allow delete: if isAuthenticated() && (request.auth.token.email == resource.data.targetEmail || request.auth.uid == resource.data.fromUid || isAdmin());
+      allow read: if isAuthenticated() && (request.auth.token.email == resource.data.targetEmail || isAdmin());
+      allow create: if isAuthenticated() && isValidPendingContact(request.resource.data);
+      allow delete: if isAuthenticated() && (request.auth.token.email == resource.data.targetEmail || isAdmin());
     }
 
     match /chats/{chatId} {
-      allow read: if isAuthenticated() && (chatId.split('_').hasAny([request.auth.uid]) || isAdmin());
+      allow read: if isAuthenticated() && (chatId.contains(request.auth.uid) || isAdmin());
       
       match /messages/{messageId} {
-        allow read: if isAuthenticated() && (chatId.split('_').hasAny([request.auth.uid]) || isAdmin());
-        allow create: if isAuthenticated() && (request.resource.data.senderId == request.auth.uid);
-        allow delete: if isAuthenticated() && (chatId.split('_').hasAny([request.auth.uid]) || isAdmin());
+        allow read: if isAuthenticated() && (chatId.contains(request.auth.uid) || isAdmin());
+        allow create: if isAuthenticated() && (request.resource.data.senderId == request.auth.uid) && isValidMessage(request.resource.data);
+        allow delete: if isAuthenticated() && (chatId.contains(request.auth.uid) || isAdmin());
       }
     }
 
