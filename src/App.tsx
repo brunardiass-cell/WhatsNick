@@ -1935,11 +1935,17 @@ function ChatView({ user, contact, onBack, setModal }: { user: UserProfile, cont
         console.error("Error processing messages snapshot:", err);
       }
     }, (error) => {
+      console.error("Firestore onSnapshot error for messages:", error);
       // Fallback if index is not ready
-      const fallbackQ = query(collection(db, 'chats', chatId, 'messages'));
-      onSnapshot(fallbackQ, (s) => {
-        setMessages(s.docs.map(d => ({ id: d.id, ...d.data() } as Message)));
-      });
+      if (error instanceof Error && error.message.includes('index')) {
+        const fallbackQ = query(collection(db, 'chats', chatId, 'messages'));
+        const unsubFallback = onSnapshot(fallbackQ, (s) => {
+          setMessages(s.docs.map(d => ({ id: d.id, ...d.data() } as Message)));
+        }, (err) => {
+          handleFirestoreError(err, OperationType.LIST, `chats/${chatId}/messages`);
+        });
+        return unsubFallback;
+      }
       handleFirestoreError(error, OperationType.LIST, `chats/${chatId}/messages`);
     });
     return () => unsubscribe();
@@ -1986,6 +1992,7 @@ function ChatView({ user, contact, onBack, setModal }: { user: UserProfile, cont
     } catch (error) {
       // Restore input text on error so user doesn't lose their message
       setInputText(currentInput);
+      console.error("Error in sendMessage:", error);
       handleFirestoreError(error, OperationType.WRITE, `chats/${chatId}/messages`);
       setModal({ 
         title: 'Erro ao enviar', 
