@@ -136,7 +136,6 @@ export default function App() {
         unsubProfile = onSnapshot(doc(db, 'users', firebaseUser.uid), async (userDoc) => {
           if (userDoc.exists()) {
             const userData = { uid: userDoc.id, ...userDoc.data() } as UserProfile;
-            console.log("👤 User profile loaded:", userData);
             setUser(userData);
             
             // Show mood prompt if not set today
@@ -325,10 +324,9 @@ export default function App() {
         childId: user.uid,
         meetAuthorized: false,
         lastMessageAt: serverTimestamp()
-      }, { merge: true });
+      });
 
       // 2. Add me to sender's contacts (Reciprocal)
-      // This works because the rules allow self-creation in someone else's list
       await setDoc(doc(db, 'users', invite.fromUid, 'contacts', user.uid), {
         uid: user.uid,
         name: user.name,
@@ -337,7 +335,7 @@ export default function App() {
         childId: invite.fromUid,
         meetAuthorized: false,
         lastMessageAt: serverTimestamp()
-      }, { merge: true });
+      });
 
       // 3. Mark invite as accepted
       await updateDoc(doc(db, 'pending_contacts', invite.id), {
@@ -347,11 +345,6 @@ export default function App() {
       setModal({ title: 'Sucesso!', message: `Agora você e ${invite.fromName} são amigos!`, type: 'alert' });
     } catch (error) {
       handleFirestoreError(error, OperationType.WRITE, 'contacts');
-      setModal({ 
-        title: 'Erro ao aceitar', 
-        message: 'Não foi possível aceitar o convite. Tente novamente mais tarde.', 
-        type: 'alert' 
-      });
     }
   };
 
@@ -1935,35 +1928,21 @@ function ChatView({ user, contact, onBack, setModal }: { user: UserProfile, cont
         console.error("Error processing messages snapshot:", err);
       }
     }, (error) => {
-      console.error("Firestore onSnapshot error for messages:", error);
       // Fallback if index is not ready
-      if (error instanceof Error && error.message.includes('index')) {
-        const fallbackQ = query(collection(db, 'chats', chatId, 'messages'));
-        const unsubFallback = onSnapshot(fallbackQ, (s) => {
-          setMessages(s.docs.map(d => ({ id: d.id, ...d.data() } as Message)));
-        }, (err) => {
-          handleFirestoreError(err, OperationType.LIST, `chats/${chatId}/messages`);
-        });
-        return unsubFallback;
-      }
+      const fallbackQ = query(collection(db, 'chats', chatId, 'messages'));
+      onSnapshot(fallbackQ, (s) => {
+        setMessages(s.docs.map(d => ({ id: d.id, ...d.data() } as Message)));
+      });
       handleFirestoreError(error, OperationType.LIST, `chats/${chatId}/messages`);
     });
     return () => unsubscribe();
   }, [chatId, user.uid, contactUid]);
 
   const sendMessage = async () => {
-    if (!inputText.trim() || !contactUid) return;
-    if (!user || !user.uid) {
-      console.error("Cannot send message: User is not authenticated or profile is missing", user);
-      setModal({ title: 'Erro', message: 'Você precisa estar logado para enviar mensagens.', type: 'alert' });
-      return;
-    }
-    
+    if (!inputText.trim()) return;
     const text = inputText;
-    const currentInput = inputText;
     setInputText('');
     setShowEmoji(false);
-    
     try {
       const messageData = {
         senderId: user.uid,
@@ -1973,14 +1952,10 @@ function ChatView({ user, contact, onBack, setModal }: { user: UserProfile, cont
         timestamp: serverTimestamp()
       };
       
-      console.log("Attempting to send message to chatId:", chatId, messageData);
-      
       // Add message
-      const msgRef = await addDoc(collection(db, 'chats', chatId, 'messages'), messageData);
-      console.log("Message saved successfully with ID:", msgRef.id);
+      await addDoc(collection(db, 'chats', chatId, 'messages'), messageData);
       
       // Update lastMessageAt and hasUnread for receiver
-      // We use merge: true to avoid overwriting existing contact fields like 'approved'
       await setDoc(doc(db, 'users', contactUid, 'contacts', user.uid), {
         uid: user.uid,
         name: user.name,
@@ -1999,15 +1974,7 @@ function ChatView({ user, contact, onBack, setModal }: { user: UserProfile, cont
       }, { merge: true });
 
     } catch (error) {
-      // Restore input text on error so user doesn't lose their message
-      setInputText(currentInput);
-      console.error("Error in sendMessage:", error);
       handleFirestoreError(error, OperationType.WRITE, `chats/${chatId}/messages`);
-      setModal({ 
-        title: 'Erro ao enviar', 
-        message: 'Não foi possível enviar sua mensagem. Verifique sua conexão ou tente novamente.', 
-        type: 'alert' 
-      });
     }
   };
 
@@ -2101,22 +2068,20 @@ function ChatView({ user, contact, onBack, setModal }: { user: UserProfile, cont
             text: 'Iniciou uma videochamada',
             timestamp: serverTimestamp()
           });
-          setModal(null);
         } catch (error) {
           handleFirestoreError(error, OperationType.WRITE, `chats/${chatId}/messages`);
         }
+        setModal(null);
       }
     });
   };
 
   const sendSOS = async () => {
-    console.log("🚨 SOS: sendSOS function entered");
     setModal({
       title: 'Enviar SOS',
       message: 'Deseja enviar um alerta SOS para este contato e seus responsáveis?',
       type: 'confirm',
       onConfirm: async () => {
-        console.log("🚨 SOS: sendSOS confirmed");
         try {
           const messageData = {
             senderId: user.uid,
@@ -2128,15 +2093,12 @@ function ChatView({ user, contact, onBack, setModal }: { user: UserProfile, cont
           };
           
           await addDoc(collection(db, 'chats', chatId, 'messages'), messageData);
-          console.log("🚨 SOS: Message added to chat");
           
           // Get location
-          console.log("🚨 SOS: Requesting geolocation...");
           const pos: any = await new Promise((resolve) => {
             navigator.geolocation.getCurrentPosition(resolve, () => resolve(null), { timeout: 5000 });
           });
           const location = pos ? { lat: pos.coords.latitude, lng: pos.coords.longitude } : null;
-          console.log("🚨 SOS: Location obtained:", location);
           
           if (user.role === 'child') {
             await addDoc(collection(db, 'sos_alerts'), {
@@ -2145,27 +2107,22 @@ function ChatView({ user, contact, onBack, setModal }: { user: UserProfile, cont
               message: "SOS via Chat",
               location
             });
-            console.log("🚨 SOS: Alert added to sos_alerts collection");
           }
 
           // Send email via backend to the person being chatted with
           let toEmail = contact.email;
           if (!toEmail) {
-            console.log("🚨 SOS: Contact email missing in state, fetching from Firestore...");
             try {
               const contactDoc = await getDoc(doc(db, 'users', contactUid));
               if (contactDoc.exists()) {
                 toEmail = (contactDoc.data() as UserProfile).email;
-                console.log("🚨 SOS: Contact email fetched:", toEmail);
               }
             } catch (e) {
-              console.error("🚨 SOS: Error fetching contact email for SOS:", e);
+              console.error("Error fetching contact email for SOS:", e);
             }
           }
 
           if (toEmail && user.email) {
-            console.log("API SOS chamada");
-            console.log("🚨 SOS: Preparing to fetch /api/sos/email", { toEmail, fromEmail: user.email });
             fetch('/api/sos/email', {
               method: 'POST',
               headers: { 'Content-Type': 'application/json' },
@@ -2175,19 +2132,7 @@ function ChatView({ user, contact, onBack, setModal }: { user: UserProfile, cont
                 senderName: user.name,
                 location
               })
-            })
-            .then(async res => {
-              console.log("🚨 SOS: API response status:", res.status);
-              const data = await res.json();
-              if (res.ok) {
-                console.log("🚨 SOS: Email sent successfully via API", data);
-              } else {
-                console.error("🚨 SOS: API returned error", data);
-              }
-            })
-            .catch(e => console.error("🚨 SOS: Error sending SOS email fetch:", e));
-          } else {
-            console.warn("🚨 SOS: Skipping email send - missing toEmail or user.email", { toEmail, userEmail: user.email });
+            }).catch(e => console.error("Error sending SOS email:", e));
           }
 
           setModal({
@@ -2196,7 +2141,6 @@ function ChatView({ user, contact, onBack, setModal }: { user: UserProfile, cont
             type: 'alert'
           });
         } catch (error) {
-          console.error("🚨 SOS: Error in sendSOS flow:", error);
           handleFirestoreError(error, OperationType.WRITE, `chats/${chatId}/messages`);
         }
       }
@@ -2450,15 +2394,12 @@ function SOSView({ user, onBack, setModal }: { user: UserProfile, onBack: () => 
   }, [countdown, triggered]);
 
   const triggerSOS = async () => {
-    console.log("🚨 SOS: triggerSOS function entered");
     setTriggered(true);
     try {
-      console.log("🚨 SOS: Requesting geolocation...");
       const pos: any = await new Promise((resolve) => {
-        navigator.geolocation.getCurrentPosition(resolve, () => resolve(null), { timeout: 5000 });
+        navigator.geolocation.getCurrentPosition(resolve, () => resolve(null));
       });
       const location = pos ? { lat: pos.coords.latitude, lng: pos.coords.longitude } : null;
-      console.log("🚨 SOS: Location obtained:", location);
 
       await addDoc(collection(db, 'sos_alerts'), {
         childId: user.uid,
@@ -2466,18 +2407,13 @@ function SOSView({ user, onBack, setModal }: { user: UserProfile, onBack: () => 
         message: "Preciso de ajuda!",
         location
       });
-      console.log("🚨 SOS: Alert added to sos_alerts collection");
       
       // Notify parents via email
-      console.log("🚨 SOS: Checking parent notification conditions...", { parentId: user.parentId, userEmail: user.email });
       if (user.parentId && user.email) {
-        console.log("🚨 SOS: Fetching parent data for email notification...");
         const parentDoc = await getDoc(doc(db, 'users', user.parentId));
         if (parentDoc.exists()) {
           const parentData = parentDoc.data() as UserProfile;
           if (parentData.email) {
-            console.log("API SOS chamada");
-            console.log("🚨 SOS: Preparing to fetch /api/sos/email for parent", { parentEmail: parentData.email, fromEmail: user.email });
             fetch('/api/sos/email', {
               method: 'POST',
               headers: { 'Content-Type': 'application/json' },
@@ -2487,30 +2423,13 @@ function SOSView({ user, onBack, setModal }: { user: UserProfile, onBack: () => 
                 senderName: user.name,
                 location
               })
-            })
-            .then(async res => {
-              console.log("🚨 SOS: API response status (parent):", res.status);
-              const data = await res.json();
-              if (res.ok) {
-                console.log("🚨 SOS: Parent email sent successfully via API", data);
-              } else {
-                console.error("🚨 SOS: Parent API returned error", data);
-              }
-            })
-            .catch(e => console.error("🚨 SOS: Error sending SOS email to parent fetch:", e));
-          } else {
-            console.warn("🚨 SOS: Parent email missing in parent document");
+            }).catch(e => console.error("Error sending SOS email:", e));
           }
-        } else {
-          console.warn("🚨 SOS: Parent document not found in Firestore");
         }
-      } else {
-        console.warn("🚨 SOS: Skipping parent email - missing parentId or user.email", { parentId: user.parentId, userEmail: user.email });
       }
 
       console.log("SOS Triggered! Parents notified.");
     } catch (error) {
-      console.error("🚨 SOS: Error in triggerSOS flow:", error);
       handleFirestoreError(error, OperationType.WRITE, 'sos_alerts');
     }
   };
