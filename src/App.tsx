@@ -308,6 +308,7 @@ export default function App() {
       setShowAddFriendModal(false);
       setModal({ title: 'Sucesso!', message: 'Convite enviado! Assim que a pessoa aceitar, vocês poderão conversar.', type: 'alert' });
     } catch (error) {
+      console.error(error);
       handleFirestoreError(error, OperationType.WRITE, 'pending_contacts');
     }
   };
@@ -1974,6 +1975,7 @@ function ChatView({ user, contact, onBack, setModal }: { user: UserProfile, cont
       }, { merge: true });
 
     } catch (error) {
+      console.error(error);
       handleFirestoreError(error, OperationType.WRITE, `chats/${chatId}/messages`);
     }
   };
@@ -2039,6 +2041,7 @@ function ChatView({ user, contact, onBack, setModal }: { user: UserProfile, cont
           timestamp: serverTimestamp()
         });
       } catch (error) {
+        console.error(error);
         handleFirestoreError(error, OperationType.WRITE, `chats/${chatId}/messages`);
       }
     };
@@ -2069,6 +2072,7 @@ function ChatView({ user, contact, onBack, setModal }: { user: UserProfile, cont
             timestamp: serverTimestamp()
           });
         } catch (error) {
+          console.error(error);
           handleFirestoreError(error, OperationType.WRITE, `chats/${chatId}/messages`);
         }
         setModal(null);
@@ -2141,6 +2145,7 @@ function ChatView({ user, contact, onBack, setModal }: { user: UserProfile, cont
             type: 'alert'
           });
         } catch (error) {
+          console.error(error);
           handleFirestoreError(error, OperationType.WRITE, `chats/${chatId}/messages`);
         }
       }
@@ -2430,6 +2435,7 @@ function SOSView({ user, onBack, setModal }: { user: UserProfile, onBack: () => 
 
       console.log("SOS Triggered! Parents notified.");
     } catch (error) {
+      console.error(error);
       handleFirestoreError(error, OperationType.WRITE, 'sos_alerts');
     }
   };
