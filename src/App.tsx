@@ -283,6 +283,10 @@ export default function App() {
 
   const sendInvite = async (email: string) => {
     if (!user || !email) return;
+    if (email.toLowerCase() === user.email.toLowerCase()) {
+      setModal({ title: 'Ops!', message: 'Você não pode enviar um convite para si mesmo.', type: 'alert' });
+      return;
+    }
     try {
       // Check if already invited
       const q = query(collection(db, 'pending_contacts'), where('targetEmail', '==', email), where('fromUid', '==', user.uid));
@@ -297,7 +301,8 @@ export default function App() {
         fromUid: user.uid,
         fromName: user.name,
         fromPhoto: user.photoURL || '',
-        timestamp: serverTimestamp()
+        timestamp: serverTimestamp(),
+        accepted: false
       });
       setFriendEmailInput('');
       setShowAddFriendModal(false);
@@ -310,7 +315,7 @@ export default function App() {
   const acceptInvite = async (invite: PendingInvite) => {
     if (!user) return;
     try {
-      // Add to current user's contacts
+      // 1. Add sender to my contacts
       await setDoc(doc(db, 'users', user.uid, 'contacts', invite.fromUid), {
         uid: invite.fromUid,
         name: invite.fromName,
@@ -321,7 +326,18 @@ export default function App() {
         lastMessageAt: serverTimestamp()
       });
 
-      // Update invite to accepted
+      // 2. Add me to sender's contacts (Reciprocal)
+      await setDoc(doc(db, 'users', invite.fromUid, 'contacts', user.uid), {
+        uid: user.uid,
+        name: user.name,
+        photoURL: user.photoURL || '',
+        approved: true,
+        childId: invite.fromUid,
+        meetAuthorized: false,
+        lastMessageAt: serverTimestamp()
+      });
+
+      // 3. Mark invite as accepted
       await updateDoc(doc(db, 'pending_contacts', invite.id), {
         accepted: true
       });
@@ -1877,7 +1893,10 @@ function ChatView({ user, contact, onBack, setModal }: { user: UserProfile, cont
   const scrollRef = useRef<HTMLDivElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
-  const contactUid = contact.uid || contact.id;
+  const contactUid = contact.uid;
+  if (!contactUid) {
+    console.error("Contact UID is missing, cannot generate chatId");
+  }
   const chatId = [user.uid, contactUid].sort().join('_');
 
   useEffect(() => {
@@ -1908,9 +1927,16 @@ function ChatView({ user, contact, onBack, setModal }: { user: UserProfile, cont
       } catch (err) {
         console.error("Error processing messages snapshot:", err);
       }
-    }, (error) => handleFirestoreError(error, OperationType.LIST, `chats/${chatId}/messages`));
+    }, (error) => {
+      // Fallback if index is not ready
+      const fallbackQ = query(collection(db, 'chats', chatId, 'messages'));
+      onSnapshot(fallbackQ, (s) => {
+        setMessages(s.docs.map(d => ({ id: d.id, ...d.data() } as Message)));
+      });
+      handleFirestoreError(error, OperationType.LIST, `chats/${chatId}/messages`);
+    });
     return () => unsubscribe();
-  }, [chatId, user.uid, contact.uid]);
+  }, [chatId, user.uid, contactUid]);
 
   const sendMessage = async () => {
     if (!inputText.trim()) return;
@@ -1931,6 +1957,9 @@ function ChatView({ user, contact, onBack, setModal }: { user: UserProfile, cont
       
       // Update lastMessageAt and hasUnread for receiver
       await setDoc(doc(db, 'users', contactUid, 'contacts', user.uid), {
+        uid: user.uid,
+        name: user.name,
+        photoURL: user.photoURL || '',
         lastMessageAt: serverTimestamp(),
         hasUnread: true,
         lastMessageText: text
@@ -1938,6 +1967,7 @@ function ChatView({ user, contact, onBack, setModal }: { user: UserProfile, cont
 
       // Update lastMessageAt for sender
       await setDoc(doc(db, 'users', user.uid, 'contacts', contactUid), {
+        uid: contactUid,
         lastMessageAt: serverTimestamp(),
         hasUnread: false,
         lastMessageText: text
@@ -2049,7 +2079,7 @@ function ChatView({ user, contact, onBack, setModal }: { user: UserProfile, cont
   const sendSOS = async () => {
     setModal({
       title: 'Enviar SOS',
-      message: 'Deseja enviar um alerta SOS para este contato?',
+      message: 'Deseja enviar um alerta SOS para este contato e seus responsáveis?',
       type: 'confirm',
       onConfirm: async () => {
         try {
@@ -2064,9 +2094,9 @@ function ChatView({ user, contact, onBack, setModal }: { user: UserProfile, cont
           
           await addDoc(collection(db, 'chats', chatId, 'messages'), messageData);
           
-          // Trigger SOS logic to notify the other person in the chat
+          // Get location
           const pos: any = await new Promise((resolve) => {
-            navigator.geolocation.getCurrentPosition(resolve, () => resolve(null));
+            navigator.geolocation.getCurrentPosition(resolve, () => resolve(null), { timeout: 5000 });
           });
           const location = pos ? { lat: pos.coords.latitude, lng: pos.coords.longitude } : null;
           
@@ -2083,7 +2113,7 @@ function ChatView({ user, contact, onBack, setModal }: { user: UserProfile, cont
           let toEmail = contact.email;
           if (!toEmail) {
             try {
-              const contactDoc = await getDoc(doc(db, 'users', contact.uid));
+              const contactDoc = await getDoc(doc(db, 'users', contactUid));
               if (contactDoc.exists()) {
                 toEmail = (contactDoc.data() as UserProfile).email;
               }
@@ -2107,7 +2137,7 @@ function ChatView({ user, contact, onBack, setModal }: { user: UserProfile, cont
 
           setModal({
             title: 'SOS Enviado',
-            message: 'Seu alerta foi enviado com sucesso.',
+            message: 'Seu alerta foi enviado com sucesso para o contato e registrado no sistema.',
             type: 'alert'
           });
         } catch (error) {
