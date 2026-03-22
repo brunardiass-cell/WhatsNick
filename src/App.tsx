@@ -2123,6 +2123,7 @@ function ChatView({ user, contact, onBack, setModal }: { user: UserProfile, cont
           }
 
           if (toEmail && user.email) {
+            console.log("🚨 SOS: Sending email request to /api/sos/email", { toEmail, fromEmail: user.email });
             fetch('/api/sos/email', {
               method: 'POST',
               headers: { 'Content-Type': 'application/json' },
@@ -2132,7 +2133,16 @@ function ChatView({ user, contact, onBack, setModal }: { user: UserProfile, cont
                 senderName: user.name,
                 location
               })
-            }).catch(e => console.error("Error sending SOS email:", e));
+            })
+            .then(async res => {
+              const data = await res.json();
+              if (res.ok) {
+                console.log("🚨 SOS: Email sent successfully via API", data);
+              } else {
+                console.error("🚨 SOS: API returned error", data);
+              }
+            })
+            .catch(e => console.error("🚨 SOS: Error sending SOS email fetch:", e));
           }
 
           setModal({
@@ -2410,10 +2420,12 @@ function SOSView({ user, onBack, setModal }: { user: UserProfile, onBack: () => 
       
       // Notify parents via email
       if (user.parentId && user.email) {
+        console.log("🚨 SOS: Fetching parent data for email notification...");
         const parentDoc = await getDoc(doc(db, 'users', user.parentId));
         if (parentDoc.exists()) {
           const parentData = parentDoc.data() as UserProfile;
           if (parentData.email) {
+            console.log("🚨 SOS: Sending email request to /api/sos/email for parent", { parentEmail: parentData.email });
             fetch('/api/sos/email', {
               method: 'POST',
               headers: { 'Content-Type': 'application/json' },
@@ -2423,7 +2435,16 @@ function SOSView({ user, onBack, setModal }: { user: UserProfile, onBack: () => 
                 senderName: user.name,
                 location
               })
-            }).catch(e => console.error("Error sending SOS email:", e));
+            })
+            .then(async res => {
+              const data = await res.json();
+              if (res.ok) {
+                console.log("🚨 SOS: Parent email sent successfully via API", data);
+              } else {
+                console.error("🚨 SOS: Parent API returned error", data);
+              }
+            })
+            .catch(e => console.error("🚨 SOS: Error sending SOS email to parent fetch:", e));
           }
         }
       }
