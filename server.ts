@@ -2,8 +2,8 @@ import express from "express";
 import { createServer as createViteServer } from "vite";
 import path from "path";
 import cors from "cors";
-import nodemailer from "nodemailer";
 import dotenv from "dotenv";
+import sosEmailHandler from "./api/sos/email";
 
 dotenv.config();
 
@@ -16,56 +16,8 @@ async function startServer() {
 
   // SOS Email Endpoint
   app.post("/api/sos/email", async (req, res) => {
-    const { fromEmail, toEmail, senderName, location } = req.body;
-
-    if (!fromEmail || !toEmail) {
-      return res.status(400).json({ error: "Missing emails" });
-    }
-
-    try {
-      // In a real production app, you'd use a real SMTP service like SendGrid, Resend, or Gmail OAuth
-      // For this environment, we'll set up a transporter that logs or uses a test account
-      if (!process.env.SMTP_HOST || !process.env.SMTP_USER || !process.env.SMTP_PASS) {
-        console.warn("⚠️ SMTP credentials not fully configured. Using default test account (ethereal.email). Emails will NOT arrive in real inboxes.");
-      }
-
-      let transporter = nodemailer.createTransport({
-        host: process.env.SMTP_HOST || "smtp.ethereal.email",
-        port: Number(process.env.SMTP_PORT) || 587,
-        secure: false, 
-        auth: {
-          user: process.env.SMTP_USER || "test@ethereal.email",
-          pass: process.env.SMTP_PASS || "testpass",
-        },
-      });
-
-      const locationLink = location 
-        ? `https://www.google.com/maps?q=${location.lat},${location.lng}`
-        : "Localização não disponível";
-
-      const info = await transporter.sendMail({
-        from: `"WhatsNick SOS" <${process.env.SMTP_USER || fromEmail}>`,
-        to: toEmail,
-        replyTo: fromEmail,
-        subject: `🚨 ALERTA SOS: ${senderName} precisa de ajuda!`,
-        text: `${senderName} (${fromEmail}) acionou um alerta SOS no WhatsNick! \n\nLocalização: ${locationLink}`,
-        html: `
-          <div style="font-family: sans-serif; padding: 20px; border: 2px solid red; border-radius: 10px;">
-            <h1 style="color: red;">🚨 ALERTA SOS</h1>
-            <p><strong>${senderName}</strong> (${fromEmail}) acionou um alerta SOS no WhatsNick!</p>
-            <p><strong>Localização:</strong> <a href="${locationLink}">${locationLink}</a></p>
-            <hr />
-            <p style="font-size: 12px; color: #666;">Este é um alerta automático de segurança do WhatsNick.</p>
-          </div>
-        `,
-      });
-
-      console.log("SOS Email sent successfully to:", toEmail, "Message ID:", info.messageId);
-      res.json({ success: true, messageId: info.messageId });
-    } catch (error) {
-      console.error("Error sending email:", error);
-      res.status(500).json({ error: "Failed to send email" });
-    }
+    console.log("API SOS chamada");
+    return sosEmailHandler(req, res);
   });
 
   // Vite middleware for development

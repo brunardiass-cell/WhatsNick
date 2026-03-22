@@ -93,6 +93,8 @@ class ErrorBoundary extends Component<{ children: React.ReactNode }, { hasError:
 export default function App() {
   const [user, setUser] = useState<UserProfile | null>(null);
   const [loading, setLoading] = useState(true);
+  const [isLoggingIn, setIsLoggingIn] = useState(false);
+  const [isSelectingRole, setIsSelectingRole] = useState(false);
   const [view, setView] = useState<'login' | 'role-select' | 'main' | 'chat' | 'sos'>('login');
   const [activeChat, setActiveChat] = useState<Contact | null>(null);
   const [activeTab, setActiveTab] = useState<'chats' | 'calls' | 'family' | 'settings'>('chats');
@@ -256,15 +258,20 @@ export default function App() {
   };
 
   const handleLogin = async () => {
+    if (isLoggingIn) return;
+    setIsLoggingIn(true);
     try {
       await signInWithPopup(auth, googleProvider);
     } catch (error) {
       console.error("Login error:", error);
+    } finally {
+      setIsLoggingIn(false);
     }
   };
 
   const handleRoleSelect = async (role: UserRole) => {
-    if (!auth.currentUser) return;
+    if (!auth.currentUser || isSelectingRole) return;
+    setIsSelectingRole(true);
     const profile: UserProfile = {
       uid: auth.currentUser.uid,
       name: auth.currentUser.displayName || 'Usuário',
@@ -278,6 +285,8 @@ export default function App() {
       setView('main');
     } catch (error) {
       handleFirestoreError(error, OperationType.WRITE, `users/${auth.currentUser.uid}`);
+    } finally {
+      setIsSelectingRole(false);
     }
   };
 
@@ -391,7 +400,7 @@ export default function App() {
               <Phone className="w-10 h-10 text-[#F48FB1]" />
             </div>
           </div>
-          <p className="text-[#F48FB1] font-bold text-xl tracking-tight">WhatsNick...</p>
+          <p className="text-[#F48FB1] font-bold text-xl tracking-tight">WhatsNicky...</p>
         </motion.div>
         
         <button 
@@ -446,8 +455,8 @@ export default function App() {
           )}
         </AnimatePresence>
         <AnimatePresence mode="wait">
-        {view === 'login' && <LoginView onLogin={handleLogin} />}
-        {view === 'role-select' && <RoleSelectView onSelect={handleRoleSelect} />}
+        {view === 'login' && <LoginView onLogin={handleLogin} isLoggingIn={isLoggingIn} />}
+        {view === 'role-select' && <RoleSelectView onSelect={handleRoleSelect} isSelectingRole={isSelectingRole} />}
         {(view === 'main' || view === 'chat') && user && (
           <div className="flex flex-1 h-full overflow-hidden relative">
             <div className={cn(
@@ -491,7 +500,7 @@ export default function App() {
                   <div className="w-24 h-24 bg-[#F48FB1]/10 rounded-full flex items-center justify-center mx-auto mb-4">
                     <MessageCircle className="w-12 h-12 text-[#F48FB1]" />
                   </div>
-                  <h2 className="text-2xl font-bold text-slate-800 mb-2">Bem-vindo ao WhatsNick</h2>
+                  <h2 className="text-2xl font-bold text-slate-800 mb-2">Bem-vindo ao WhatsNicky</h2>
                   <p className="text-slate-500">Selecione uma conversa para começar a digitar.</p>
                 </div>
               )}
@@ -834,7 +843,7 @@ function NavButton({ active, onClick, icon, label, badge, sosBadge, user, invite
   );
 }
 
-function LoginView({ onLogin }: { onLogin: () => void }) {
+function LoginView({ onLogin, isLoggingIn }: { onLogin: () => void, isLoggingIn: boolean }) {
   return (
     <motion.div 
       initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
@@ -845,23 +854,29 @@ function LoginView({ onLogin }: { onLogin: () => void }) {
         <div className="relative bg-white/95 p-6 rounded-full shadow-inner transform group-hover:scale-110 transition-transform">
           <Phone className="w-14 h-14 text-[#F48FB1]" />
         </div>
-        {/* Stars decoration */}
         <div className="absolute top-4 right-4 text-yellow-300 animate-pulse">★</div>
         <div className="absolute bottom-6 left-4 text-white/60 text-xs">✦</div>
         <div className="absolute top-10 left-6 text-white/40 text-sm">✧</div>
       </div>
       <h1 className="text-5xl font-black mb-2 text-slate-800 tracking-tighter" style={{ color: '#4A4A4A' }}>
-        Whats<span className="text-[#F48FB1]">Nick</span>
+        Whats<span className="text-[#F48FB1]">Nicky</span>
       </h1>
       <p className="text-slate-500 mb-12 font-medium">Seguro, Divertido e para Crianças!</p>
       
       <button 
         onClick={onLogin}
-        className="w-full py-4 text-white rounded-3xl font-bold text-lg shadow-xl hover:scale-[1.02] active:scale-[0.98] transition-all flex items-center justify-center gap-3"
+        disabled={isLoggingIn}
+        className="w-full py-4 text-white rounded-3xl font-bold text-lg shadow-xl hover:scale-[1.02] active:scale-[0.98] transition-all flex items-center justify-center gap-3 disabled:opacity-70"
         style={{ background: NICK_GRADIENT }}
       >
-        <img src="https://www.google.com/favicon.ico" className="w-6 h-6" alt="Google" />
-        Entrar com Google
+        {isLoggingIn ? (
+          <div className="w-6 h-6 border-2 border-white border-t-transparent rounded-full animate-spin" />
+        ) : (
+          <>
+            <img src="https://www.google.com/favicon.ico" className="w-6 h-6" alt="Google" />
+            Entrar com Google
+          </>
+        )}
       </button>
       
       <div className="mt-12 flex items-center gap-2 text-slate-400 text-sm">
@@ -872,7 +887,7 @@ function LoginView({ onLogin }: { onLogin: () => void }) {
   );
 }
 
-function RoleSelectView({ onSelect }: { onSelect: (role: UserRole) => void }) {
+function RoleSelectView({ onSelect, isSelectingRole }: { onSelect: (role: UserRole) => void, isSelectingRole: boolean }) {
   return (
     <motion.div 
       initial={{ x: 300, opacity: 0 }} animate={{ x: 0, opacity: 1 }} exit={{ x: -300, opacity: 0 }}
@@ -883,7 +898,8 @@ function RoleSelectView({ onSelect }: { onSelect: (role: UserRole) => void }) {
       <div className="grid grid-cols-1 gap-6 w-full">
         <button 
           onClick={() => onSelect('parent')}
-          className="p-8 bg-slate-50 rounded-3xl shadow-sm hover:shadow-md transition-all flex flex-col items-center gap-4 border-2 border-transparent hover:border-[#F48FB1]"
+          disabled={isSelectingRole}
+          className="p-8 bg-slate-50 rounded-3xl shadow-sm hover:shadow-md transition-all flex flex-col items-center gap-4 border-2 border-transparent hover:border-[#F48FB1] disabled:opacity-70"
         >
           <div className="w-20 h-20 bg-[#F48FB1]/10 rounded-full flex items-center justify-center">
             <User className="w-10 h-10 text-[#F48FB1]" />
@@ -893,7 +909,8 @@ function RoleSelectView({ onSelect }: { onSelect: (role: UserRole) => void }) {
         
         <button 
           onClick={() => onSelect('child')}
-          className="p-8 bg-slate-50 rounded-3xl shadow-sm hover:shadow-md transition-all flex flex-col items-center gap-4 border-2 border-transparent hover:border-[#F48FB1]"
+          disabled={isSelectingRole}
+          className="p-8 bg-slate-50 rounded-3xl shadow-sm hover:shadow-md transition-all flex flex-col items-center gap-4 border-2 border-transparent hover:border-[#F48FB1] disabled:opacity-70"
         >
           <div className="w-20 h-20 bg-[#F48FB1]/10 rounded-full flex items-center justify-center">
             <Smile className="w-10 h-10 text-[#F48FB1]" />
@@ -901,6 +918,12 @@ function RoleSelectView({ onSelect }: { onSelect: (role: UserRole) => void }) {
           <span className="text-xl font-bold text-slate-800">Eu sou a Criança</span>
         </button>
       </div>
+      {isSelectingRole && (
+        <div className="mt-8 flex items-center gap-2 text-[#F48FB1] font-bold animate-pulse">
+          <div className="w-4 h-4 border-2 border-[#F48FB1] border-t-transparent rounded-full animate-spin" />
+          <span>Configurando seu perfil...</span>
+        </div>
+      )}
     </motion.div>
   );
 }
@@ -1489,7 +1512,7 @@ function FamilyView({ user, setModal, setView, setActiveChat }: { user: UserProf
       if (snapshot.empty) {
         setModal({
           title: 'Ops!',
-          message: 'Este email não está cadastrado no WhatsNick. Peça para a pessoa se cadastrar primeiro!',
+          message: 'Este email não está cadastrado no WhatsNicky. Peça para a pessoa se cadastrar primeiro!',
           type: 'alert'
         });
         return;
@@ -1890,6 +1913,7 @@ function ChatView({ user, contact, onBack, setModal }: { user: UserProfile, cont
   const [messages, setMessages] = useState<Message[]>([]);
   const [inputText, setInputText] = useState('');
   const [showEmoji, setShowEmoji] = useState(false);
+  const [isSending, setIsSending] = useState(false);
   const scrollRef = useRef<HTMLDivElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
@@ -1939,10 +1963,15 @@ function ChatView({ user, contact, onBack, setModal }: { user: UserProfile, cont
   }, [chatId, user.uid, contactUid]);
 
   const sendMessage = async () => {
-    if (!inputText.trim()) return;
+    if (!inputText.trim() || isSending) return;
+    if (!auth.currentUser) {
+      console.error("User not authenticated");
+      return;
+    }
     const text = inputText;
     setInputText('');
     setShowEmoji(false);
+    setIsSending(true);
     try {
       const messageData = {
         senderId: user.uid,
@@ -1953,7 +1982,12 @@ function ChatView({ user, contact, onBack, setModal }: { user: UserProfile, cont
       };
       
       // Add message
-      await addDoc(collection(db, 'chats', chatId, 'messages'), messageData);
+      try {
+        await addDoc(collection(db, 'chats', chatId, 'messages'), messageData);
+      } catch (error) {
+        console.error("Error in addDoc:", error);
+        throw error;
+      }
       
       // Update lastMessageAt and hasUnread for receiver
       await setDoc(doc(db, 'users', contactUid, 'contacts', user.uid), {
@@ -1975,6 +2009,8 @@ function ChatView({ user, contact, onBack, setModal }: { user: UserProfile, cont
 
     } catch (error) {
       handleFirestoreError(error, OperationType.WRITE, `chats/${chatId}/messages`);
+    } finally {
+      setIsSending(false);
     }
   };
 
@@ -2039,6 +2075,7 @@ function ChatView({ user, contact, onBack, setModal }: { user: UserProfile, cont
           timestamp: serverTimestamp()
         });
       } catch (error) {
+        console.error("Error in addDoc (file upload):", error);
         handleFirestoreError(error, OperationType.WRITE, `chats/${chatId}/messages`);
       }
     };
@@ -2069,6 +2106,7 @@ function ChatView({ user, contact, onBack, setModal }: { user: UserProfile, cont
             timestamp: serverTimestamp()
           });
         } catch (error) {
+          console.error("Error in addDoc (video call):", error);
           handleFirestoreError(error, OperationType.WRITE, `chats/${chatId}/messages`);
         }
         setModal(null);
@@ -2092,7 +2130,12 @@ function ChatView({ user, contact, onBack, setModal }: { user: UserProfile, cont
             isSOS: true
           };
           
-          await addDoc(collection(db, 'chats', chatId, 'messages'), messageData);
+          try {
+            await addDoc(collection(db, 'chats', chatId, 'messages'), messageData);
+          } catch (error) {
+            console.error("Error in addDoc (SOS message):", error);
+            throw error;
+          }
           
           // Get location
           const pos: any = await new Promise((resolve) => {
@@ -2369,10 +2412,14 @@ function ChatView({ user, contact, onBack, setModal }: { user: UserProfile, cont
           </div>
           <button 
             onClick={sendMessage} 
-            disabled={!inputText.trim()}
-            className="p-3 bg-[#CE93D8] text-white rounded-full shadow-md disabled:opacity-50"
+            disabled={isSending || !inputText.trim()}
+            className="p-3 bg-[#CE93D8] text-white rounded-full shadow-md disabled:opacity-50 flex items-center justify-center min-w-[44px] min-h-[44px]"
           >
-            <Send className="w-5 h-5" />
+            {isSending ? (
+              <div className="w-5 h-5 border-2 border-white border-t-transparent rounded-full animate-spin" />
+            ) : (
+              <Send className="w-5 h-5" />
+            )}
           </button>
         </div>
       </div>
@@ -2401,12 +2448,17 @@ function SOSView({ user, onBack, setModal }: { user: UserProfile, onBack: () => 
       });
       const location = pos ? { lat: pos.coords.latitude, lng: pos.coords.longitude } : null;
 
-      await addDoc(collection(db, 'sos_alerts'), {
-        childId: user.uid,
-        timestamp: serverTimestamp(),
-        message: "Preciso de ajuda!",
-        location
-      });
+      try {
+        await addDoc(collection(db, 'sos_alerts'), {
+          childId: user.uid,
+          timestamp: serverTimestamp(),
+          message: "Preciso de ajuda!",
+          location
+        });
+      } catch (error) {
+        console.error("Error in addDoc (SOS alert):", error);
+        throw error;
+      }
       
       // Notify parents via email
       if (user.parentId && user.email) {
