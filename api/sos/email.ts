@@ -1,34 +1,29 @@
-import express from "express";
-import cors from "cors";
 import nodemailer from "nodemailer";
-import dotenv from "dotenv";
-
-dotenv.config();
 
 export const runtime = "nodejs";
 
-const app = express();
-app.use(cors());
-app.use(express.json());
+export default async function handler(req: any, res: any) {
+  console.log("🚨 API SOS chamada: Request received");
 
-// SOS Email Endpoint
-app.post("/api/sos/email", async (req, res) => {
-  console.log("🚨 SOS API: Request received");
+  if (req.method !== "POST") {
+    console.warn("🚨 API SOS: Method not allowed", req.method);
+    return res.status(405).json({ error: "Method not allowed" });
+  }
+
   const { fromEmail, toEmail, senderName, location } = req.body;
-  console.log(`🚨 SOS API: From: ${fromEmail}, To: ${toEmail}, Name: ${senderName}`);
+  console.log(`🚨 API SOS: From: ${fromEmail}, To: ${toEmail}, Name: ${senderName}`);
 
   if (!fromEmail || !toEmail) {
-    console.error("🚨 SOS API: Missing emails in request body");
+    console.error("🚨 API SOS: Missing emails in request body");
     return res.status(400).json({ error: "Missing emails" });
   }
 
   try {
-    console.log("🚨 SOS API: Configuring transporter...");
+    console.log("🚨 API SOS: Configuring transporter (Port 465)...");
     const transporter = nodemailer.createTransport({
       host: "smtp.gmail.com",
-      port: 587,
-      secure: false, // true for 465, false for other ports
-      requireTLS: true,
+      port: 465,
+      secure: true, // true for 465, false for other ports
       auth: {
         user: process.env.SMTP_USER,
         pass: process.env.SMTP_PASS,
@@ -39,7 +34,7 @@ app.post("/api/sos/email", async (req, res) => {
       ? `https://www.google.com/maps?q=${location.lat},${location.lng}`
       : "Localização não disponível";
 
-    console.log("🚨 SOS API: Sending email...");
+    console.log("🚨 API SOS: Sending email...");
     const info = await transporter.sendMail({
       from: `"WhatsNick SOS" <${process.env.SMTP_USER}>`,
       to: toEmail,
@@ -57,12 +52,13 @@ app.post("/api/sos/email", async (req, res) => {
       `,
     });
 
-    console.log("🚨 SOS API: Email sent successfully!", info.messageId);
-    res.json({ success: true, messageId: info.messageId });
+    console.log("🚨 API SOS: Email sent successfully!", info.messageId);
+    return res.status(200).json({ success: true, messageId: info.messageId });
   } catch (error) {
-    console.error("🚨 SOS API: Error sending email:", error);
-    res.status(500).json({ error: "Failed to send email", details: error instanceof Error ? error.message : String(error) });
+    console.error("🚨 API SOS: Error sending email:", error);
+    return res.status(500).json({ 
+      error: "Failed to send email", 
+      details: error instanceof Error ? error.message : String(error) 
+    });
   }
-});
-
-export default app;
+}

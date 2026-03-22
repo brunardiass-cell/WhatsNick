@@ -2132,6 +2132,7 @@ function ChatView({ user, contact, onBack, setModal }: { user: UserProfile, cont
           }
 
           if (toEmail && user.email) {
+            console.log("API SOS chamada");
             console.log("🚨 SOS: Preparing to fetch /api/sos/email", { toEmail, fromEmail: user.email });
             fetch('/api/sos/email', {
               method: 'POST',
@@ -2443,6 +2444,7 @@ function SOSView({ user, onBack, setModal }: { user: UserProfile, onBack: () => 
         if (parentDoc.exists()) {
           const parentData = parentDoc.data() as UserProfile;
           if (parentData.email) {
+            console.log("API SOS chamada");
             console.log("🚨 SOS: Preparing to fetch /api/sos/email for parent", { parentEmail: parentData.email, fromEmail: user.email });
             fetch('/api/sos/email', {
               method: 'POST',
