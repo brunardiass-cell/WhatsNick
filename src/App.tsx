@@ -101,6 +101,7 @@ export default function App() {
   const [pendingInvites, setPendingInvites] = useState<PendingInvite[]>([]);
   const [showAddFriendModal, setShowAddFriendModal] = useState(false);
   const [friendEmailInput, setFriendEmailInput] = useState('');
+  const [isProcessing, setIsProcessing] = useState(false);
 
   const MOODS = [
     { label: 'Feliz', emoji: '😊' },
@@ -210,7 +211,8 @@ export default function App() {
   }, [user?.uid]);
 
   const updateMood = async (mood: string, emoji: string) => {
-    if (!user) return;
+    if (!user || isProcessing) return;
+    setIsProcessing(true);
     try {
       await setDoc(doc(db, 'users', user.uid), { 
         mood, 
@@ -232,11 +234,14 @@ export default function App() {
       setShowMoodPrompt(false);
     } catch (error) {
       handleFirestoreError(error, OperationType.WRITE, `users/${user.uid}`);
+    } finally {
+      setIsProcessing(false);
     }
   };
 
   const updateProfilePhoto = async (photoURL: string) => {
-    if (!user) return;
+    if (!user || isProcessing) return;
+    setIsProcessing(true);
     try {
       await setDoc(doc(db, 'users', user.uid), { photoURL }, { merge: true });
       
@@ -252,19 +257,26 @@ export default function App() {
       await Promise.all(updatePromises);
     } catch (error) {
       handleFirestoreError(error, OperationType.WRITE, `users/${user.uid}`);
+    } finally {
+      setIsProcessing(false);
     }
   };
 
   const handleLogin = async () => {
+    if (isProcessing) return;
+    setIsProcessing(true);
     try {
       await signInWithPopup(auth, googleProvider);
     } catch (error) {
       console.error("Login error:", error);
+    } finally {
+      setIsProcessing(false);
     }
   };
 
   const handleRoleSelect = async (role: UserRole) => {
-    if (!auth.currentUser) return;
+    if (!auth.currentUser || isProcessing) return;
+    setIsProcessing(true);
     const profile: UserProfile = {
       uid: auth.currentUser.uid,
       name: auth.currentUser.displayName || 'Usuário',
@@ -277,16 +289,20 @@ export default function App() {
       setUser(profile);
       setView('main');
     } catch (error) {
+      console.error(error);
       handleFirestoreError(error, OperationType.WRITE, `users/${auth.currentUser.uid}`);
+    } finally {
+      setIsProcessing(false);
     }
   };
 
   const sendInvite = async (email: string) => {
-    if (!user || !email) return;
+    if (!user || !email || isProcessing) return;
     if (email.toLowerCase() === user.email.toLowerCase()) {
       setModal({ title: 'Ops!', message: 'Você não pode enviar um convite para si mesmo.', type: 'alert' });
       return;
     }
+    setIsProcessing(true);
     try {
       // Check if already invited
       const q = query(collection(db, 'pending_contacts'), where('targetEmail', '==', email), where('fromUid', '==', user.uid));
@@ -310,11 +326,14 @@ export default function App() {
     } catch (error) {
       console.error(error);
       handleFirestoreError(error, OperationType.WRITE, 'pending_contacts');
+    } finally {
+      setIsProcessing(false);
     }
   };
 
   const acceptInvite = async (invite: PendingInvite) => {
-    if (!user) return;
+    if (!user || isProcessing) return;
+    setIsProcessing(true);
     try {
       // 1. Add sender to my contacts
       await setDoc(doc(db, 'users', user.uid, 'contacts', invite.fromUid), {
@@ -345,25 +364,35 @@ export default function App() {
 
       setModal({ title: 'Sucesso!', message: `Agora você e ${invite.fromName} são amigos!`, type: 'alert' });
     } catch (error) {
+      console.error(error);
       handleFirestoreError(error, OperationType.WRITE, 'contacts');
+    } finally {
+      setIsProcessing(false);
     }
   };
 
   const declineInvite = async (inviteId: string) => {
+    if (isProcessing) return;
+    setIsProcessing(true);
     try {
       await deleteDoc(doc(db, 'pending_contacts', inviteId));
     } catch (error) {
+      console.error(error);
       handleFirestoreError(error, OperationType.DELETE, `pending_contacts/${inviteId}`);
+    } finally {
+      setIsProcessing(false);
     }
   };
 
   const clearAllContacts = async () => {
-    if (!user) return;
+    if (!user || isProcessing) return;
     setModal({
       type: 'confirm',
       title: 'Limpar Contatos',
       message: 'Tem certeza que deseja remover TODOS os seus contatos? Esta ação não pode ser desfeita.',
       onConfirm: async () => {
+        if (isProcessing) return;
+        setIsProcessing(true);
         try {
           const contactsSnap = await getDocs(collection(db, 'users', user.uid, 'contacts'));
           const deletePromises = contactsSnap.docs.map(async (contactDoc) => {
@@ -372,7 +401,10 @@ export default function App() {
           await Promise.all(deletePromises);
           setModal({ type: 'alert', title: 'Sucesso', message: 'Todos os contatos foram removidos.' });
         } catch (error) {
+          console.error(error);
           handleFirestoreError(error, OperationType.DELETE, 'contacts');
+        } finally {
+          setIsProcessing(false);
         }
       }
     });
@@ -392,7 +424,7 @@ export default function App() {
               <Phone className="w-10 h-10 text-[#F48FB1]" />
             </div>
           </div>
-          <p className="text-[#F48FB1] font-bold text-xl tracking-tight">WhatsNick...</p>
+          <p className="text-[#F48FB1] font-bold text-xl tracking-tight">WhatsNicky...</p>
         </motion.div>
         
         <button 
@@ -447,8 +479,8 @@ export default function App() {
           )}
         </AnimatePresence>
         <AnimatePresence mode="wait">
-        {view === 'login' && <LoginView onLogin={handleLogin} />}
-        {view === 'role-select' && <RoleSelectView onSelect={handleRoleSelect} />}
+        {view === 'login' && <LoginView onLogin={handleLogin} isProcessing={isProcessing} />}
+        {view === 'role-select' && <RoleSelectView onSelect={handleRoleSelect} isProcessing={isProcessing} />}
         {(view === 'main' || view === 'chat') && user && (
           <div className="flex flex-1 h-full overflow-hidden relative">
             <div className={cn(
@@ -492,7 +524,7 @@ export default function App() {
                   <div className="w-24 h-24 bg-[#F48FB1]/10 rounded-full flex items-center justify-center mx-auto mb-4">
                     <MessageCircle className="w-12 h-12 text-[#F48FB1]" />
                   </div>
-                  <h2 className="text-2xl font-bold text-slate-800 mb-2">Bem-vindo ao WhatsNick</h2>
+                  <h2 className="text-2xl font-bold text-slate-800 mb-2">Bem-vindo ao WhatsNicky</h2>
                   <p className="text-slate-500">Selecione uma conversa para começar a digitar.</p>
                 </div>
               )}
@@ -835,7 +867,7 @@ function NavButton({ active, onClick, icon, label, badge, sosBadge, user, invite
   );
 }
 
-function LoginView({ onLogin }: { onLogin: () => void }) {
+function LoginView({ onLogin, isProcessing }: { onLogin: () => void, isProcessing: boolean }) {
   return (
     <motion.div 
       initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
@@ -852,17 +884,24 @@ function LoginView({ onLogin }: { onLogin: () => void }) {
         <div className="absolute top-10 left-6 text-white/40 text-sm">✧</div>
       </div>
       <h1 className="text-5xl font-black mb-2 text-slate-800 tracking-tighter" style={{ color: '#4A4A4A' }}>
-        Whats<span className="text-[#F48FB1]">Nick</span>
+        Whats<span className="text-[#F48FB1]">Nicky</span>
       </h1>
       <p className="text-slate-500 mb-12 font-medium">Seguro, Divertido e para Crianças!</p>
       
       <button 
         onClick={onLogin}
-        className="w-full py-4 text-white rounded-3xl font-bold text-lg shadow-xl hover:scale-[1.02] active:scale-[0.98] transition-all flex items-center justify-center gap-3"
+        disabled={isProcessing}
+        className="w-full py-4 text-white rounded-3xl font-bold text-lg shadow-xl hover:scale-[1.02] active:scale-[0.98] transition-all flex items-center justify-center gap-3 disabled:opacity-50"
         style={{ background: NICK_GRADIENT }}
       >
-        <img src="https://www.google.com/favicon.ico" className="w-6 h-6" alt="Google" />
-        Entrar com Google
+        {isProcessing ? (
+          <div className="w-6 h-6 border-2 border-white border-t-transparent rounded-full animate-spin" />
+        ) : (
+          <>
+            <img src="https://www.google.com/favicon.ico" className="w-6 h-6" alt="Google" />
+            Entrar com Google
+          </>
+        )}
       </button>
       
       <div className="mt-12 flex items-center gap-2 text-slate-400 text-sm">
@@ -873,7 +912,7 @@ function LoginView({ onLogin }: { onLogin: () => void }) {
   );
 }
 
-function RoleSelectView({ onSelect }: { onSelect: (role: UserRole) => void }) {
+function RoleSelectView({ onSelect, isProcessing }: { onSelect: (role: UserRole) => void, isProcessing: boolean }) {
   return (
     <motion.div 
       initial={{ x: 300, opacity: 0 }} animate={{ x: 0, opacity: 1 }} exit={{ x: -300, opacity: 0 }}
@@ -884,22 +923,36 @@ function RoleSelectView({ onSelect }: { onSelect: (role: UserRole) => void }) {
       <div className="grid grid-cols-1 gap-6 w-full">
         <button 
           onClick={() => onSelect('parent')}
-          className="p-8 bg-slate-50 rounded-3xl shadow-sm hover:shadow-md transition-all flex flex-col items-center gap-4 border-2 border-transparent hover:border-[#F48FB1]"
+          disabled={isProcessing}
+          className="p-8 bg-slate-50 rounded-3xl shadow-sm hover:shadow-md transition-all flex flex-col items-center gap-4 border-2 border-transparent hover:border-[#F48FB1] disabled:opacity-50"
         >
-          <div className="w-20 h-20 bg-[#F48FB1]/10 rounded-full flex items-center justify-center">
-            <User className="w-10 h-10 text-[#F48FB1]" />
-          </div>
-          <span className="text-xl font-bold text-slate-800">Eu sou o Responsável</span>
+          {isProcessing ? (
+            <div className="w-10 h-10 border-4 border-[#F48FB1] border-t-transparent rounded-full animate-spin" />
+          ) : (
+            <>
+              <div className="w-20 h-20 bg-[#F48FB1]/10 rounded-full flex items-center justify-center">
+                <User className="w-10 h-10 text-[#F48FB1]" />
+              </div>
+              <span className="text-xl font-bold text-slate-800">Eu sou o Responsável</span>
+            </>
+          )}
         </button>
         
         <button 
           onClick={() => onSelect('child')}
-          className="p-8 bg-slate-50 rounded-3xl shadow-sm hover:shadow-md transition-all flex flex-col items-center gap-4 border-2 border-transparent hover:border-[#F48FB1]"
+          disabled={isProcessing}
+          className="p-8 bg-slate-50 rounded-3xl shadow-sm hover:shadow-md transition-all flex flex-col items-center gap-4 border-2 border-transparent hover:border-[#F48FB1] disabled:opacity-50"
         >
-          <div className="w-20 h-20 bg-[#F48FB1]/10 rounded-full flex items-center justify-center">
-            <Smile className="w-10 h-10 text-[#F48FB1]" />
-          </div>
-          <span className="text-xl font-bold text-slate-800">Eu sou a Criança</span>
+          {isProcessing ? (
+            <div className="w-10 h-10 border-4 border-[#F48FB1] border-t-transparent rounded-full animate-spin" />
+          ) : (
+            <>
+              <div className="w-20 h-20 bg-[#F48FB1]/10 rounded-full flex items-center justify-center">
+                <Smile className="w-10 h-10 text-[#F48FB1]" />
+              </div>
+              <span className="text-xl font-bold text-slate-800">Eu sou a Criança</span>
+            </>
+          )}
         </button>
       </div>
     </motion.div>
@@ -1490,7 +1543,7 @@ function FamilyView({ user, setModal, setView, setActiveChat }: { user: UserProf
       if (snapshot.empty) {
         setModal({
           title: 'Ops!',
-          message: 'Este email não está cadastrado no WhatsNick. Peça para a pessoa se cadastrar primeiro!',
+          message: 'Este email não está cadastrado no WhatsNicky. Peça para a pessoa se cadastrar primeiro!',
           type: 'alert'
         });
         return;
@@ -1891,6 +1944,7 @@ function ChatView({ user, contact, onBack, setModal }: { user: UserProfile, cont
   const [messages, setMessages] = useState<Message[]>([]);
   const [inputText, setInputText] = useState('');
   const [showEmoji, setShowEmoji] = useState(false);
+  const [isSending, setIsSending] = useState(false);
   const scrollRef = useRef<HTMLDivElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
@@ -1940,7 +1994,8 @@ function ChatView({ user, contact, onBack, setModal }: { user: UserProfile, cont
   }, [chatId, user.uid, contactUid]);
 
   const sendMessage = async () => {
-    if (!inputText.trim()) return;
+    if (!inputText.trim() || isSending) return;
+    setIsSending(true);
     const text = inputText;
     setInputText('');
     setShowEmoji(false);
@@ -1977,6 +2032,8 @@ function ChatView({ user, contact, onBack, setModal }: { user: UserProfile, cont
     } catch (error) {
       console.error(error);
       handleFirestoreError(error, OperationType.WRITE, `chats/${chatId}/messages`);
+    } finally {
+      setIsSending(false);
     }
   };
 
@@ -2374,10 +2431,14 @@ function ChatView({ user, contact, onBack, setModal }: { user: UserProfile, cont
           </div>
           <button 
             onClick={sendMessage} 
-            disabled={!inputText.trim()}
-            className="p-3 bg-[#CE93D8] text-white rounded-full shadow-md disabled:opacity-50"
+            disabled={!inputText.trim() || isSending}
+            className="p-3 bg-[#CE93D8] text-white rounded-full shadow-md disabled:opacity-50 flex items-center justify-center"
           >
-            <Send className="w-5 h-5" />
+            {isSending ? (
+              <div className="w-5 h-5 border-2 border-white border-t-transparent rounded-full animate-spin" />
+            ) : (
+              <Send className="w-5 h-5" />
+            )}
           </button>
         </div>
       </div>
@@ -2399,6 +2460,7 @@ function SOSView({ user, onBack, setModal }: { user: UserProfile, onBack: () => 
   }, [countdown, triggered]);
 
   const triggerSOS = async () => {
+    if (triggered) return;
     setTriggered(true);
     try {
       const pos: any = await new Promise((resolve) => {

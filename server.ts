@@ -16,6 +16,7 @@ async function startServer() {
 
   // SOS Email Endpoint
   app.post("/api/sos/email", async (req, res) => {
+    console.log("API SOS chamada");
     const { fromEmail, toEmail, senderName, location } = req.body;
 
     if (!fromEmail || !toEmail) {
@@ -44,18 +45,18 @@ async function startServer() {
         : "Localização não disponível";
 
       const info = await transporter.sendMail({
-        from: `"WhatsNick SOS" <${process.env.SMTP_USER || fromEmail}>`,
+        from: `"WhatsNicky SOS" <${process.env.SMTP_USER || fromEmail}>`,
         to: toEmail,
         replyTo: fromEmail,
         subject: `🚨 ALERTA SOS: ${senderName} precisa de ajuda!`,
-        text: `${senderName} (${fromEmail}) acionou um alerta SOS no WhatsNick! \n\nLocalização: ${locationLink}`,
+        text: `${senderName} (${fromEmail}) acionou um alerta SOS no WhatsNicky! \n\nLocalização: ${locationLink}`,
         html: `
           <div style="font-family: sans-serif; padding: 20px; border: 2px solid red; border-radius: 10px;">
             <h1 style="color: red;">🚨 ALERTA SOS</h1>
-            <p><strong>${senderName}</strong> (${fromEmail}) acionou um alerta SOS no WhatsNick!</p>
+            <p><strong>${senderName}</strong> (${fromEmail}) acionou um alerta SOS no WhatsNicky!</p>
             <p><strong>Localização:</strong> <a href="${locationLink}">${locationLink}</a></p>
             <hr />
-            <p style="font-size: 12px; color: #666;">Este é um alerta automático de segurança do WhatsNick.</p>
+            <p style="font-size: 12px; color: #666;">Este é um alerta automático de segurança do WhatsNicky.</p>
           </div>
         `,
       });
