@@ -1,9 +1,9 @@
 import React, { useState, useEffect, useRef, Component } from 'react';
 import { 
   auth, db, googleProvider, signInWithPopup, signOut, onAuthStateChanged,
-  collection, doc, setDoc, getDoc, getDocs, query, where, onSnapshot, addDoc, orderBy, serverTimestamp, deleteDoc
+  collection, doc, setDoc, getDoc, getDocs, query, where, onSnapshot, addDoc, orderBy, serverTimestamp, deleteDoc, updateDoc
 } from './firebase';
-import { UserProfile, Contact, Message, SOSAlert, UserRole } from './types';
+import { UserProfile, Contact, Message, SOSAlert, PendingInvite, UserRole } from './types';
 import { cn } from './utils';
 import { 
   MessageCircle, Shield, Phone, Camera, Send, AlertTriangle, 
@@ -98,6 +98,9 @@ export default function App() {
   const [activeTab, setActiveTab] = useState<'chats' | 'calls' | 'family' | 'settings'>('chats');
   const [modal, setModal] = useState<{ type: 'confirm' | 'alert', title: string, message: string, onConfirm?: () => void } | null>(null);
   const [showMoodPrompt, setShowMoodPrompt] = useState(false);
+  const [pendingInvites, setPendingInvites] = useState<PendingInvite[]>([]);
+  const [showAddFriendModal, setShowAddFriendModal] = useState(false);
+  const [friendEmailInput, setFriendEmailInput] = useState('');
 
   const MOODS = [
     { label: 'Feliz', emoji: '😊' },
@@ -143,32 +146,6 @@ export default function App() {
             }
 
             if (view === 'login' || view === 'role-select') setView('main');
-            
-            // Check for pending contacts (only once or when needed)
-            const q = query(collection(db, 'pending_contacts'), where('targetEmail', '==', firebaseUser.email));
-            const snapshot = await getDocs(q);
-            snapshot.forEach(async (inviteDoc) => {
-              const invite = inviteDoc.data();
-              await setDoc(doc(db, 'users', firebaseUser.uid, 'contacts', invite.fromUid), {
-                uid: invite.fromUid,
-                name: invite.fromName,
-                photoURL: invite.fromPhoto,
-                approved: true,
-                childId: firebaseUser.uid,
-                meetAuthorized: false
-              });
-              await setDoc(doc(db, 'users', invite.fromUid, 'contacts', firebaseUser.uid), {
-                uid: firebaseUser.uid,
-                name: userData.name,
-                photoURL: userData.photoURL || '',
-                approved: true,
-                childId: invite.fromUid,
-                meetAuthorized: false
-              });
-              const emailKey = `email_${firebaseUser.email?.replace(/\./g, '_')}`;
-              await deleteDoc(doc(db, 'users', invite.fromUid, 'contacts', emailKey)).catch(() => {});
-              await deleteDoc(doc(db, 'pending_contacts', inviteDoc.id));
-            });
           } else {
             setView('role-select');
           }
@@ -189,6 +166,48 @@ export default function App() {
       if (unsubProfile) unsubProfile();
     };
   }, []);
+
+  // Separate effect for invites and accepted sent invites
+  useEffect(() => {
+    if (!user) return;
+
+    // Real-time listener for incoming pending invites
+    const qInvites = query(collection(db, 'pending_contacts'), where('targetEmail', '==', user.email));
+    const unsubInvites = onSnapshot(qInvites, (snapshot) => {
+      setPendingInvites(snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as PendingInvite)));
+    });
+
+    // Real-time listener for sent invites that were accepted
+    const qSent = query(collection(db, 'pending_contacts'), where('fromUid', '==', user.uid), where('accepted', '==', true));
+    const unsubSent = onSnapshot(qSent, (snapshot) => {
+      snapshot.docs.forEach(async (inviteDoc) => {
+        const invite = inviteDoc.data() as PendingInvite;
+        // Find the user profile for the target email
+        const qUser = query(collection(db, 'users'), where('email', '==', invite.targetEmail));
+        const userSnapshot = await getDocs(qUser);
+        if (!userSnapshot.empty) {
+          const targetUser = userSnapshot.docs[0].data() as UserProfile;
+          // Add to current user's contacts
+          await setDoc(doc(db, 'users', user.uid, 'contacts', targetUser.uid), {
+            uid: targetUser.uid,
+            name: targetUser.name,
+            photoURL: targetUser.photoURL || '',
+            approved: true,
+            childId: user.uid,
+            meetAuthorized: false,
+            lastMessageAt: serverTimestamp()
+          });
+        }
+        // Delete the invite
+        await deleteDoc(doc(db, 'pending_contacts', inviteDoc.id));
+      });
+    });
+
+    return () => {
+      unsubInvites();
+      unsubSent();
+    };
+  }, [user?.uid]);
 
   const updateMood = async (mood: string, emoji: string) => {
     if (!user) return;
@@ -262,13 +281,109 @@ export default function App() {
     }
   };
 
+  const sendInvite = async (email: string) => {
+    if (!user || !email) return;
+    if (email.toLowerCase() === user.email.toLowerCase()) {
+      setModal({ title: 'Ops!', message: 'Você não pode enviar um convite para si mesmo.', type: 'alert' });
+      return;
+    }
+    try {
+      // Check if already invited
+      const q = query(collection(db, 'pending_contacts'), where('targetEmail', '==', email), where('fromUid', '==', user.uid));
+      const snapshot = await getDocs(q);
+      if (!snapshot.empty) {
+        setModal({ title: 'Aviso', message: 'Convite já enviado para este email.', type: 'alert' });
+        return;
+      }
+
+      await addDoc(collection(db, 'pending_contacts'), {
+        targetEmail: email,
+        fromUid: user.uid,
+        fromName: user.name,
+        fromPhoto: user.photoURL || '',
+        timestamp: serverTimestamp(),
+        accepted: false
+      });
+      setFriendEmailInput('');
+      setShowAddFriendModal(false);
+      setModal({ title: 'Sucesso!', message: 'Convite enviado! Assim que a pessoa aceitar, vocês poderão conversar.', type: 'alert' });
+    } catch (error) {
+      handleFirestoreError(error, OperationType.WRITE, 'pending_contacts');
+    }
+  };
+
+  const acceptInvite = async (invite: PendingInvite) => {
+    if (!user) return;
+    try {
+      // 1. Add sender to my contacts
+      await setDoc(doc(db, 'users', user.uid, 'contacts', invite.fromUid), {
+        uid: invite.fromUid,
+        name: invite.fromName,
+        photoURL: invite.fromPhoto || '',
+        approved: true,
+        childId: user.uid,
+        meetAuthorized: false,
+        lastMessageAt: serverTimestamp()
+      });
+
+      // 2. Add me to sender's contacts (Reciprocal)
+      await setDoc(doc(db, 'users', invite.fromUid, 'contacts', user.uid), {
+        uid: user.uid,
+        name: user.name,
+        photoURL: user.photoURL || '',
+        approved: true,
+        childId: invite.fromUid,
+        meetAuthorized: false,
+        lastMessageAt: serverTimestamp()
+      });
+
+      // 3. Mark invite as accepted
+      await updateDoc(doc(db, 'pending_contacts', invite.id), {
+        accepted: true
+      });
+
+      setModal({ title: 'Sucesso!', message: `Agora você e ${invite.fromName} são amigos!`, type: 'alert' });
+    } catch (error) {
+      handleFirestoreError(error, OperationType.WRITE, 'contacts');
+    }
+  };
+
+  const declineInvite = async (inviteId: string) => {
+    try {
+      await deleteDoc(doc(db, 'pending_contacts', inviteId));
+    } catch (error) {
+      handleFirestoreError(error, OperationType.DELETE, `pending_contacts/${inviteId}`);
+    }
+  };
+
+  const clearAllContacts = async () => {
+    if (!user) return;
+    setModal({
+      type: 'confirm',
+      title: 'Limpar Contatos',
+      message: 'Tem certeza que deseja remover TODOS os seus contatos? Esta ação não pode ser desfeita.',
+      onConfirm: async () => {
+        try {
+          const contactsSnap = await getDocs(collection(db, 'users', user.uid, 'contacts'));
+          const deletePromises = contactsSnap.docs.map(async (contactDoc) => {
+            return deleteDoc(doc(db, 'users', user.uid, 'contacts', contactDoc.id));
+          });
+          await Promise.all(deletePromises);
+          setModal({ type: 'alert', title: 'Sucesso', message: 'Todos os contatos foram removidos.' });
+        } catch (error) {
+          handleFirestoreError(error, OperationType.DELETE, 'contacts');
+        }
+      }
+    });
+  };
+
   if (loading) {
     return (
-      <div className="flex items-center justify-center min-h-screen bg-white">
+      <div className="flex flex-col items-center justify-center min-h-screen bg-white p-6">
         <motion.div 
           animate={{ scale: [1, 1.1, 1] }}
           transition={{ repeat: Infinity, duration: 1.5 }}
-          className="flex flex-col items-center"
+          className="flex flex-col items-center mb-12"
         >
           <div className="w-24 h-24 mb-6 rounded-[32px] flex items-center justify-center shadow-xl relative overflow-hidden" style={{ background: NICK_GRADIENT }}>
             <div className="absolute inset-0 bg-white/20 blur-xl" />
@@ -278,6 +393,14 @@ export default function App() {
           </div>
           <p className="text-[#F48FB1] font-bold text-xl tracking-tight">WhatsNick...</p>
         </motion.div>
+        
+        <button 
+          onClick={() => signOut(auth)}
+          className="flex items-center gap-2 px-6 py-3 text-slate-400 hover:text-slate-600 transition-colors font-medium"
+        >
+          <LogOut className="w-5 h-5" />
+          Sair da conta
+        </button>
       </div>
     );
   }
@@ -342,6 +465,11 @@ export default function App() {
                 avatars={AVATARS}
                 updateMood={updateMood}
                 updateProfilePhoto={updateProfilePhoto}
+                pendingInvites={pendingInvites}
+                acceptInvite={acceptInvite}
+                declineInvite={declineInvite}
+                setShowAddFriendModal={setShowAddFriendModal}
+                onClearContacts={clearAllContacts}
               />
             </div>
             <div className={cn(
@@ -411,12 +539,49 @@ export default function App() {
           </div>
         )}
       </AnimatePresence>
+      {/* Add Friend Modal */}
+      <AnimatePresence>
+        {showAddFriendModal && (
+          <div className="fixed inset-0 bg-black/50 flex items-center justify-center p-6 z-[100]">
+            <motion.div 
+              initial={{ scale: 0.9, opacity: 0 }} 
+              animate={{ scale: 1, opacity: 1 }} 
+              exit={{ scale: 0.9, opacity: 0 }}
+              className="bg-white w-full max-w-xs rounded-2xl p-6 shadow-2xl"
+            >
+              <h3 className="text-lg font-bold mb-2">Adicionar Amigo</h3>
+              <p className="text-slate-600 mb-4 text-sm">Digite o email do seu amigo para enviar um convite.</p>
+              <input 
+                type="email" 
+                value={friendEmailInput}
+                onChange={(e) => setFriendEmailInput(e.target.value)}
+                placeholder="email@exemplo.com"
+                className="w-full p-3 bg-slate-50 rounded-xl mb-6 outline-none border-2 border-transparent focus:border-[#F48FB1]"
+              />
+              <div className="flex justify-end gap-3">
+                <button 
+                  onClick={() => setShowAddFriendModal(false)}
+                  className="px-4 py-2 text-slate-500 font-bold"
+                >
+                  Cancelar
+                </button>
+                <button 
+                  onClick={() => sendInvite(friendEmailInput)}
+                  className="px-4 py-2 bg-[#F48FB1] text-white rounded-xl font-bold"
+                >
+                  Enviar
+                </button>
+              </div>
+            </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
     </div>
     </ErrorBoundary>
   );
 }
 
-function MainLayout({ user, activeTab, setActiveTab, setView, setActiveChat, setModal, moods, avatars, updateMood, updateProfilePhoto }: any) {
+function MainLayout({ user, activeTab, setActiveTab, setView, setActiveChat, setModal, moods, avatars, updateMood, updateProfilePhoto, pendingInvites, acceptInvite, declineInvite, setShowAddFriendModal, onClearContacts }: any) {
   return (
     <div className="flex flex-col md:flex-row h-full bg-white w-full">
       {/* Sidebar Navigation (Desktop) / Bottom Navigation (Mobile) */}
@@ -429,6 +594,7 @@ function MainLayout({ user, activeTab, setActiveTab, setView, setActiveChat, set
             label="Conversas" 
             badge={true}
             user={user}
+            inviteBadge={pendingInvites.length > 0}
           />
           <NavButton 
             active={activeTab === 'calls'} 
@@ -467,8 +633,8 @@ function MainLayout({ user, activeTab, setActiveTab, setView, setActiveChat, set
         <div className="flex-1 overflow-y-auto">
           {activeTab === 'chats' && (
             user.role === 'parent' 
-              ? <ParentDashboard user={user} setView={setView} setActiveChat={setActiveChat} setModal={setModal} />
-              : <ChildDashboard user={user} setView={setView} setActiveChat={setActiveChat} setModal={setModal} />
+              ? <ParentDashboard user={user} setView={setView} setActiveChat={setActiveChat} setModal={setModal} pendingInvites={pendingInvites} acceptInvite={acceptInvite} declineInvite={declineInvite} setShowAddFriendModal={setShowAddFriendModal} />
+              : <ChildDashboard user={user} setView={setView} setActiveChat={setActiveChat} setModal={setModal} pendingInvites={pendingInvites} acceptInvite={acceptInvite} declineInvite={declineInvite} setShowAddFriendModal={setShowAddFriendModal} />
           )}
           {activeTab === 'calls' && <CallsView user={user} setActiveChat={setActiveChat} setView={setView} setModal={setModal} />}
           {activeTab === 'family' && <FamilyView user={user} setModal={setModal} setView={setView} setActiveChat={setActiveChat} />}
@@ -482,6 +648,7 @@ function MainLayout({ user, activeTab, setActiveTab, setView, setActiveChat, set
               avatars={avatars}
               updateMood={updateMood}
               updateProfilePhoto={updateProfilePhoto}
+              onClearContacts={onClearContacts}
             />
           )}
         </div>
@@ -602,7 +769,7 @@ function AlertsView({ user, setModal }: { user: UserProfile, setModal: (m: any) 
   );
 }
 
-function NavButton({ active, onClick, icon, label, badge, sosBadge, user }: any) {
+function NavButton({ active, onClick, icon, label, badge, sosBadge, user, inviteBadge }: any) {
   const [unreadCount, setUnreadCount] = useState(0);
   const [sosCount, setSosCount] = useState(0);
 
@@ -653,11 +820,11 @@ function NavButton({ active, onClick, icon, label, badge, sosBadge, user }: any)
         {icon}
       </div>
       <span className="text-[10px] font-bold uppercase tracking-tighter md:hidden lg:block">{label}</span>
-      {badge && unreadCount > 0 && (
+      {(badge && unreadCount > 0) || inviteBadge ? (
         <span className="absolute top-1 right-1 w-5 h-5 bg-[#F48FB1] text-white text-[10px] font-bold rounded-full flex items-center justify-center border-2 border-white animate-bounce">
-          {unreadCount}
+          {unreadCount || '!'}
         </span>
-      )}
+      ) : null}
       {sosBadge && sosCount > 0 && (
         <span className="absolute top-1 right-1 w-5 h-5 bg-red-500 text-white text-[10px] font-bold rounded-full flex items-center justify-center border-2 border-white animate-pulse">
           {sosCount}
@@ -738,7 +905,7 @@ function RoleSelectView({ onSelect }: { onSelect: (role: UserRole) => void }) {
   );
 }
 
-function ParentDashboard({ user, setView, setActiveChat, setModal }: { user: UserProfile, setView: (v: any) => void, setActiveChat: (c: any) => void, setModal: (m: any) => void }) {
+function ParentDashboard({ user, setView, setActiveChat, setModal, pendingInvites, acceptInvite, declineInvite, setShowAddFriendModal }: any) {
   const [contacts, setContacts] = useState<Contact[]>([]);
 
   // Listen for parent's own contacts (friends/other parents)
@@ -777,12 +944,37 @@ function ParentDashboard({ user, setView, setActiveChat, setModal }: { user: Use
           <h1 className="text-xl font-bold">Conversas</h1>
           <p className="text-sm opacity-80">Olá, {user.name}</p>
         </div>
-        <button onClick={() => signOut(auth)} className="p-2 text-white/60 hover:text-white">
-          <LogOut className="w-6 h-6" />
+        <button onClick={() => setShowAddFriendModal(true)} className="p-2 bg-white/20 rounded-xl">
+          <UserPlus className="w-6 h-6" />
         </button>
       </header>
 
       <main className="flex-1 p-6 overflow-y-auto">
+        {pendingInvites.length > 0 && (
+          <div className="mb-8">
+            <h3 className="text-sm font-bold text-slate-500 uppercase tracking-wider mb-3">Convites Pendentes</h3>
+            <div className="space-y-3">
+              {pendingInvites.map((invite: any) => (
+                <div key={invite.id} className="bg-white p-4 rounded-2xl shadow-sm border border-[#F48FB1]/20 flex items-center gap-3">
+                  <img src={invite.fromPhoto || `https://api.dicebear.com/7.x/avataaars/svg?seed=${invite.fromUid}`} className="w-10 h-10 rounded-full" alt="" />
+                  <div className="flex-1">
+                    <p className="text-sm font-bold text-slate-800">{invite.fromName}</p>
+                    <p className="text-[10px] text-slate-400">Quer ser seu amigo</p>
+                  </div>
+                  <div className="flex gap-2">
+                    <button onClick={() => acceptInvite(invite)} className="p-2 bg-green-500 text-white rounded-lg">
+                      <Check className="w-4 h-4" />
+                    </button>
+                    <button onClick={() => declineInvite(invite.id)} className="p-2 bg-red-500 text-white rounded-lg">
+                      <X className="w-4 h-4" />
+                    </button>
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+
         <h2 className="text-lg font-bold text-slate-700 mb-6">Minhas Conversas</h2>
 
         {contacts.length === 0 ? (
@@ -876,7 +1068,7 @@ const ChildCard: React.FC<ChildCardProps> = ({ child, onChat, onManage }) => {
   );
 };
 
-function ChildDashboard({ user, setView, setActiveChat, setModal }: { user: UserProfile, setView: (v: any) => void, setActiveChat: (c: any) => void, setModal: (m: any) => void }) {
+function ChildDashboard({ user, setView, setActiveChat, setModal, pendingInvites, acceptInvite, declineInvite, setShowAddFriendModal }: any) {
   const [contacts, setContacts] = useState<Contact[]>([]);
 
   useEffect(() => {
@@ -938,12 +1130,42 @@ function ChildDashboard({ user, setView, setActiveChat, setModal }: { user: User
           </div>
           <h1 className="text-2xl font-bold">Olá, {user.name}!</h1>
         </div>
-        <button onClick={() => setView('sos')} className="w-12 h-12 bg-red-500 text-white rounded-2xl shadow-lg flex items-center justify-center animate-pulse">
-          <AlertTriangle className="w-6 h-6" />
-        </button>
+        <div className="flex gap-2">
+          <button onClick={() => setShowAddFriendModal(true)} className="w-12 h-12 bg-white/20 text-white rounded-2xl flex items-center justify-center">
+            <UserPlus className="w-6 h-6" />
+          </button>
+          <button onClick={() => setView('sos')} className="w-12 h-12 bg-red-500 text-white rounded-2xl shadow-lg flex items-center justify-center animate-pulse">
+            <AlertTriangle className="w-6 h-6" />
+          </button>
+        </div>
       </header>
 
       <main className="flex-1 p-6 overflow-y-auto">
+        {pendingInvites.length > 0 && (
+          <div className="mb-8">
+            <h3 className="text-sm font-bold text-slate-500 uppercase tracking-wider mb-3">Convites Pendentes</h3>
+            <div className="space-y-3">
+              {pendingInvites.map((invite: any) => (
+                <div key={invite.id} className="bg-white p-4 rounded-3xl shadow-md border-2 border-[#F48FB1]/20 flex items-center gap-3">
+                  <img src={invite.fromPhoto || `https://api.dicebear.com/7.x/avataaars/svg?seed=${invite.fromUid}`} className="w-12 h-12 rounded-full" alt="" />
+                  <div className="flex-1">
+                    <p className="font-bold text-slate-800">{invite.fromName}</p>
+                    <p className="text-[10px] text-slate-500">Quer ser seu amigo!</p>
+                  </div>
+                  <div className="flex gap-2">
+                    <button onClick={() => acceptInvite(invite)} className="p-3 bg-green-500 text-white rounded-2xl shadow-sm">
+                      <Check className="w-5 h-5" />
+                    </button>
+                    <button onClick={() => declineInvite(invite.id)} className="p-3 bg-red-500 text-white rounded-2xl shadow-sm">
+                      <X className="w-5 h-5" />
+                    </button>
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+
         <h2 className="text-lg font-bold text-slate-800 mb-4">Meus Amigos</h2>
         
         <div className="grid grid-cols-2 gap-4">
@@ -1532,7 +1754,7 @@ function FamilyView({ user, setModal, setView, setActiveChat }: { user: UserProf
   );
 }
 
-function SettingsView({ user, onLogout, setModal, moods, avatars, updateMood, updateProfilePhoto }: { user: UserProfile, onLogout: () => void, setModal: (m: any) => void, moods: any[], avatars: string[], updateMood: (m: string, e: string) => void, updateProfilePhoto: (url: string) => Promise<void> }) {
+function SettingsView({ user, onLogout, setModal, moods, avatars, updateMood, updateProfilePhoto, onClearContacts }: { user: UserProfile, onLogout: () => void, setModal: (m: any) => void, moods: any[], avatars: string[], updateMood: (m: string, e: string) => void, updateProfilePhoto: (url: string) => Promise<void>, onClearContacts: () => void }) {
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [uploading, setUploading] = useState(false);
 
@@ -1645,6 +1867,14 @@ function SettingsView({ user, onLogout, setModal, moods, avatars, updateMood, up
         </section>
 
         <button 
+          onClick={onClearContacts}
+          className="w-full p-4 bg-white text-orange-500 rounded-3xl font-bold shadow-sm border border-slate-100 flex items-center justify-center gap-2 hover:bg-orange-50 transition-colors"
+        >
+          <Trash2 className="w-5 h-5" />
+          Limpar Todos os Contatos
+        </button>
+
+        <button 
           onClick={onLogout}
           className="w-full p-4 bg-white text-red-500 rounded-3xl font-bold shadow-sm border border-slate-100 flex items-center justify-center gap-2 hover:bg-red-50 transition-colors"
         >
@@ -1663,7 +1893,10 @@ function ChatView({ user, contact, onBack, setModal }: { user: UserProfile, cont
   const scrollRef = useRef<HTMLDivElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
-  const contactUid = contact.uid || contact.id;
+  const contactUid = contact.uid;
+  if (!contactUid) {
+    console.error("Contact UID is missing, cannot generate chatId");
+  }
   const chatId = [user.uid, contactUid].sort().join('_');
 
   useEffect(() => {
@@ -1694,9 +1927,16 @@ function ChatView({ user, contact, onBack, setModal }: { user: UserProfile, cont
       } catch (err) {
         console.error("Error processing messages snapshot:", err);
       }
-    }, (error) => handleFirestoreError(error, OperationType.LIST, `chats/${chatId}/messages`));
+    }, (error) => {
+      // Fallback if index is not ready
+      const fallbackQ = query(collection(db, 'chats', chatId, 'messages'));
+      onSnapshot(fallbackQ, (s) => {
+        setMessages(s.docs.map(d => ({ id: d.id, ...d.data() } as Message)));
+      });
+      handleFirestoreError(error, OperationType.LIST, `chats/${chatId}/messages`);
+    });
     return () => unsubscribe();
-  }, [chatId, user.uid, contact.uid]);
+  }, [chatId, user.uid, contactUid]);
 
   const sendMessage = async () => {
     if (!inputText.trim()) return;
@@ -1717,6 +1957,9 @@ function ChatView({ user, contact, onBack, setModal }: { user: UserProfile, cont
       
       // Update lastMessageAt and hasUnread for receiver
       await setDoc(doc(db, 'users', contactUid, 'contacts', user.uid), {
+        uid: user.uid,
+        name: user.name,
+        photoURL: user.photoURL || '',
         lastMessageAt: serverTimestamp(),
         hasUnread: true,
         lastMessageText: text
@@ -1724,6 +1967,7 @@ function ChatView({ user, contact, onBack, setModal }: { user: UserProfile, cont
 
       // Update lastMessageAt for sender
       await setDoc(doc(db, 'users', user.uid, 'contacts', contactUid), {
+        uid: contactUid,
         lastMessageAt: serverTimestamp(),
         hasUnread: false,
         lastMessageText: text
@@ -1835,7 +2079,7 @@ function ChatView({ user, contact, onBack, setModal }: { user: UserProfile, cont
   const sendSOS = async () => {
     setModal({
       title: 'Enviar SOS',
-      message: 'Deseja enviar um alerta SOS para este contato?',
+      message: 'Deseja enviar um alerta SOS para este contato e seus responsáveis?',
       type: 'confirm',
       onConfirm: async () => {
         try {
@@ -1850,9 +2094,9 @@ function ChatView({ user, contact, onBack, setModal }: { user: UserProfile, cont
           
           await addDoc(collection(db, 'chats', chatId, 'messages'), messageData);
           
-          // Trigger SOS logic to notify the other person in the chat
+          // Get location
           const pos: any = await new Promise((resolve) => {
-            navigator.geolocation.getCurrentPosition(resolve, () => resolve(null));
+            navigator.geolocation.getCurrentPosition(resolve, () => resolve(null), { timeout: 5000 });
           });
           const location = pos ? { lat: pos.coords.latitude, lng: pos.coords.longitude } : null;
           
@@ -1869,7 +2113,7 @@ function ChatView({ user, contact, onBack, setModal }: { user: UserProfile, cont
           let toEmail = contact.email;
           if (!toEmail) {
             try {
-              const contactDoc = await getDoc(doc(db, 'users', contact.uid));
+              const contactDoc = await getDoc(doc(db, 'users', contactUid));
               if (contactDoc.exists()) {
                 toEmail = (contactDoc.data() as UserProfile).email;
               }
@@ -1879,6 +2123,7 @@ function ChatView({ user, contact, onBack, setModal }: { user: UserProfile, cont
           }
 
           if (toEmail && user.email) {
+            console.log("🚨 SOS: Sending email request to /api/sos/email", { toEmail, fromEmail: user.email });
             fetch('/api/sos/email', {
               method: 'POST',
               headers: { 'Content-Type': 'application/json' },
@@ -1888,12 +2133,21 @@ function ChatView({ user, contact, onBack, setModal }: { user: UserProfile, cont
                 senderName: user.name,
                 location
               })
-            }).catch(e => console.error("Error sending SOS email:", e));
+            })
+            .then(async res => {
+              const data = await res.json();
+              if (res.ok) {
+                console.log("🚨 SOS: Email sent successfully via API", data);
+              } else {
+                console.error("🚨 SOS: API returned error", data);
+              }
+            })
+            .catch(e => console.error("🚨 SOS: Error sending SOS email fetch:", e));
           }
 
           setModal({
             title: 'SOS Enviado',
-            message: 'Seu alerta foi enviado com sucesso.',
+            message: 'Seu alerta foi enviado com sucesso para o contato e registrado no sistema.',
             type: 'alert'
           });
         } catch (error) {
@@ -2166,10 +2420,12 @@ function SOSView({ user, onBack, setModal }: { user: UserProfile, onBack: () => 
       
       // Notify parents via email
       if (user.parentId && user.email) {
+        console.log("🚨 SOS: Fetching parent data for email notification...");
         const parentDoc = await getDoc(doc(db, 'users', user.parentId));
         if (parentDoc.exists()) {
           const parentData = parentDoc.data() as UserProfile;
           if (parentData.email) {
+            console.log("🚨 SOS: Sending email request to /api/sos/email for parent", { parentEmail: parentData.email });
             fetch('/api/sos/email', {
               method: 'POST',
               headers: { 'Content-Type': 'application/json' },
@@ -2179,7 +2435,16 @@ function SOSView({ user, onBack, setModal }: { user: UserProfile, onBack: () => 
                 senderName: user.name,
                 location
               })
-            }).catch(e => console.error("Error sending SOS email:", e));
+            })
+            .then(async res => {
+              const data = await res.json();
+              if (res.ok) {
+                console.log("🚨 SOS: Parent email sent successfully via API", data);
+              } else {
+                console.error("🚨 SOS: Parent API returned error", data);
+              }
+            })
+            .catch(e => console.error("🚨 SOS: Error sending SOS email to parent fetch:", e));
           }
         }
       }

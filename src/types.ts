@@ -52,3 +52,13 @@ export interface SOSAlert {
   timestamp: any;
   message: string;
 }
+
+export interface PendingInvite {
+  id: string;
+  targetEmail: string;
+  fromUid: string;
+  fromName: string;
+  fromPhoto?: string;
+  timestamp: any;
+  accepted?: boolean;
+}
