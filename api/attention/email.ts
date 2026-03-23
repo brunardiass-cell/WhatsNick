@@ -19,10 +19,13 @@ export default async function handler(req: any, res: any) {
   }
 
   try {
+    const port = Number(process.env.SMTP_PORT) || 587;
+    const secure = port === 465;
+
     let transporter = nodemailer.createTransport({
       host: process.env.SMTP_HOST || "smtp.ethereal.email",
-      port: Number(process.env.SMTP_PORT) || 587,
-      secure: false, 
+      port: port,
+      secure: secure, 
       auth: {
         user: process.env.SMTP_USER || "test@ethereal.email",
         pass: process.env.SMTP_PASS || "testpass",
