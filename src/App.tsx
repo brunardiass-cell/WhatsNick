@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useRef, Component } from 'react';
 import { 
   auth, db, googleProvider, signInWithPopup, signOut, onAuthStateChanged,
-  collection, doc, setDoc, getDoc, getDocs, query, where, onSnapshot, addDoc, orderBy, serverTimestamp, deleteDoc, updateDoc
+  collection, doc, setDoc, getDoc, getDocs, query, where, onSnapshot, addDoc, orderBy, serverTimestamp, deleteDoc, updateDoc, deleteField
 } from './firebase';
 import { UserProfile, Contact, Message, PendingInvite, UserRole } from './types';
 import { cn } from './utils';
@@ -329,6 +329,20 @@ export default function App() {
     }
   };
 
+  const updateTrustedSOSContact = async (email: string) => {
+    if (!user || isUpdating) return;
+    setIsUpdating(true);
+    try {
+      await setDoc(doc(db, 'users_v3', user.uid), { 
+        trustedSOSContactEmail: email 
+      }, { merge: true });
+    } catch (error) {
+      handleFirestoreError(error, OperationType.WRITE, `users_v3/${user.uid}`);
+    } finally {
+      setIsUpdating(false);
+    }
+  };
+
   const handleLogin = async () => {
     if (isLoggingIn) return;
     setIsLoggingIn(true);
@@ -474,8 +488,9 @@ export default function App() {
             const location = { lat: latitude, lng: longitude };
 
             // Find target email
-            let targetEmail = user.email; // Default to self if no parent
-            if (user.role === 'child' && user.parentId) {
+            let targetEmail = user.trustedSOSContactEmail || user.email; // Use trusted contact if set, otherwise self
+            
+            if (!user.trustedSOSContactEmail && user.role === 'child' && user.parentId) {
               const parentDoc = await getDoc(doc(db, 'users_v3', user.parentId));
               if (parentDoc.exists()) {
                 targetEmail = parentDoc.data().email;
@@ -627,6 +642,7 @@ export default function App() {
                 isProcessingInvite={isProcessingInvite}
                 contacts={contacts}
                 onSOS={handleSOS}
+                updateTrustedSOSContact={updateTrustedSOSContact}
               />
             </div>
             <div className={cn(
@@ -737,7 +753,7 @@ export default function App() {
   );
 }
 
-function MainLayout({ user, activeTab, setActiveTab, setView, setActiveChat, setModal, moods, avatars, updateMood, updateProfilePhoto, pendingInvites, acceptInvite, declineInvite, setShowAddFriendModal, onClearContacts, isUpdating, isAdding, setIsAdding, isProcessingInvite, contacts, onSOS }: any) {
+function MainLayout({ user, activeTab, setActiveTab, setView, setActiveChat, setModal, moods, avatars, updateMood, updateProfilePhoto, pendingInvites, acceptInvite, declineInvite, setShowAddFriendModal, onClearContacts, isUpdating, isAdding, setIsAdding, isProcessingInvite, contacts, onSOS, updateTrustedSOSContact }: any) {
   return (
     <div className="flex flex-col md:flex-row h-full bg-white w-full">
       {/* Sidebar Navigation (Desktop) / Bottom Navigation (Mobile) */}
@@ -823,6 +839,7 @@ function MainLayout({ user, activeTab, setActiveTab, setView, setActiveChat, set
               updateProfilePhoto={updateProfilePhoto}
               onClearContacts={onClearContacts}
               isUpdating={isUpdating}
+              updateTrustedSOSContact={updateTrustedSOSContact}
             />
           )}
         </div>
@@ -1062,9 +1079,10 @@ interface ChildCardProps {
   child: UserProfile;
   onChat?: () => void;
   onManage: () => void;
+  onUnlink?: () => void;
 }
 
-const ChildCard: React.FC<ChildCardProps> = ({ child, onChat, onManage }) => {
+const ChildCard: React.FC<ChildCardProps> = ({ child, onChat, onManage, onUnlink }) => {
   return (
     <div className="bg-white rounded-3xl p-4 shadow-sm border border-slate-100">
       <div className="flex items-center gap-4">
@@ -1089,6 +1107,11 @@ const ChildCard: React.FC<ChildCardProps> = ({ child, onChat, onManage }) => {
           <button onClick={onManage} className="p-2 bg-slate-100 text-slate-600 rounded-xl hover:bg-slate-200 transition-colors">
             <Settings className="w-5 h-5" />
           </button>
+          {onUnlink && (
+            <button onClick={onUnlink} className="p-2 text-red-400 hover:bg-red-50 rounded-xl transition-colors">
+              <X className="w-5 h-5" />
+            </button>
+          )}
         </div>
       </div>
     </div>
@@ -1406,6 +1429,31 @@ function FamilyView({ user, setModal, setView, setActiveChat, isAdding, setIsAdd
     }
   };
 
+  const unlinkChild = async (childUid: string, childName: string) => {
+    setModal({
+      title: 'Desvincular Filho',
+      message: `Tem certeza que deseja desvincular ${childName}? Esta ação removerá o vínculo familiar.`,
+      type: 'confirm',
+      onConfirm: async () => {
+        try {
+          // 1. Remove parentId from child document
+          await updateDoc(doc(db, 'users_v3', childUid), { parentId: deleteField() });
+
+          // 2. Remove parent from child's contacts
+          await deleteDoc(doc(db, 'users_v3', childUid, 'contacts', user.uid));
+
+          // 3. Remove child from parent's contacts
+          await deleteDoc(doc(db, 'users_v3', user.uid, 'contacts', childUid));
+
+          setModal({ title: 'Sucesso', message: `${childName} foi desvinculado com sucesso.`, type: 'alert' });
+          if (selectedChild?.uid === childUid) setSelectedChild(null);
+        } catch (error) {
+          handleFirestoreError(error, OperationType.WRITE, `users_v3/${childUid}`);
+        }
+      }
+    });
+  };
+
   const addContact = async () => {
     if (!emailInput || isAdding) return;
     setIsAdding(true);
@@ -1718,6 +1766,7 @@ function FamilyView({ user, setModal, setView, setActiveChat, isAdding, setIsAdd
                       child={child} 
                       onManage={() => setSelectedChild(child)}
                       onChat={() => { setActiveChat(child); setView('chat'); }} 
+                      onUnlink={() => unlinkChild(child.uid, child.name)}
                     />
                   ))}
                 </div>
@@ -1802,9 +1851,10 @@ function FamilyView({ user, setModal, setView, setActiveChat, isAdding, setIsAdd
   );
 }
 
-function SettingsView({ user, onLogout, setModal, moods, avatars, updateMood, updateProfilePhoto, onClearContacts, isUpdating }: { user: UserProfile, onLogout: () => void, setModal: (m: any) => void, moods: any[], avatars: string[], updateMood: (m: string, e: string) => void, updateProfilePhoto: (url: string) => Promise<void>, onClearContacts: () => void, isUpdating: boolean }) {
+function SettingsView({ user, onLogout, setModal, moods, avatars, updateMood, updateProfilePhoto, onClearContacts, isUpdating, updateTrustedSOSContact }: { user: UserProfile, onLogout: () => void, setModal: (m: any) => void, moods: any[], avatars: string[], updateMood: (m: string, e: string) => void, updateProfilePhoto: (url: string) => Promise<void>, onClearContacts: () => void, isUpdating: boolean, updateTrustedSOSContact: (email: string) => Promise<void> }) {
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [uploading, setUploading] = useState(false);
+  const [sosEmail, setSosEmail] = useState(user.trustedSOSContactEmail || '');
 
   const handlePhotoUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
@@ -1913,6 +1963,32 @@ function SettingsView({ user, onLogout, setModal, moods, avatars, updateMood, up
                 <img src={url} className="w-full h-full object-cover" alt="" />
               </button>
             ))}
+          </div>
+        </section>
+
+        <section className="space-y-4">
+          <h4 className="font-bold text-slate-800 flex items-center gap-2">
+            <Shield className="w-5 h-5 text-red-500" />
+            Contato de Emergência (SOS)
+          </h4>
+          <div className="bg-white p-4 rounded-2xl border border-slate-100 space-y-3">
+            <p className="text-xs text-slate-500">Este e-mail receberá seus alertas de SOS com sua localização.</p>
+            <div className="flex gap-2">
+              <input 
+                type="email" 
+                value={sosEmail}
+                onChange={(e) => setSosEmail(e.target.value)}
+                placeholder="email@confianca.com"
+                className="flex-1 p-3 bg-slate-50 rounded-xl outline-none border-2 border-transparent focus:border-[#F48FB1] text-sm"
+              />
+              <button 
+                disabled={isUpdating || sosEmail === user.trustedSOSContactEmail}
+                onClick={() => updateTrustedSOSContact(sosEmail)}
+                className="px-4 py-2 bg-[#F48FB1] text-white rounded-xl font-bold text-sm disabled:opacity-50"
+              >
+                Salvar
+              </button>
+            </div>
           </div>
         </section>
 

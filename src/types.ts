@@ -12,6 +12,7 @@ export interface UserProfile {
   mood?: string;
   moodEmoji?: string;
   moodUpdatedAt?: any;
+  trustedSOSContactEmail?: string;
 }
 
 export interface Contact {
