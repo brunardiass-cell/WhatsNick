@@ -98,6 +98,7 @@ export default function App() {
   const [isUpdating, setIsUpdating] = useState(false);
   const [isAdding, setIsAdding] = useState(false);
   const [isProcessingInvite, setIsProcessingInvite] = useState(false);
+  const [contacts, setContacts] = useState<Contact[]>([]);
   const [selectedMoodLabel, setSelectedMoodLabel] = useState<string | null>(null);
   const [view, setView] = useState<'login' | 'role-select' | 'main' | 'chat'>('login');
   const [activeChat, setActiveChat] = useState<Contact | null>(null);
@@ -189,6 +190,44 @@ export default function App() {
       clearTimeout(loadingTimeout);
     };
   }, []);
+
+  // Global listener for contacts and unread count
+  useEffect(() => {
+    if (!user) {
+      setContacts([]);
+      document.title = 'WhatsNicky';
+      return;
+    }
+
+    const q = query(
+      collection(db, 'users_v3', user.uid, 'contacts'), 
+      where('approved', '==', true)
+    );
+    
+    const unsubscribe = onSnapshot(q, (snapshot) => {
+      const contactsList = snapshot.docs.map(doc => {
+        const data = doc.data();
+        return { id: doc.id, uid: data.uid || doc.id, ...data } as Contact;
+      }).sort((a, b) => {
+        const timeA = a.lastMessageAt?.toDate ? a.lastMessageAt.toDate().getTime() : 0;
+        const timeB = b.lastMessageAt?.toDate ? b.lastMessageAt.toDate().getTime() : 0;
+        return timeB - timeA;
+      });
+      
+      setContacts(contactsList);
+      
+      const unreadCount = contactsList.filter(c => c.hasUnread).length;
+      if (unreadCount > 0) {
+        document.title = `(${unreadCount}) WhatsNicky`;
+      } else {
+        document.title = 'WhatsNicky';
+      }
+    }, (error) => {
+      console.error("Error listening to contacts:", error);
+    });
+
+    return () => unsubscribe();
+  }, [user?.uid]);
 
   // Separate effect for invites and accepted sent invites
   useEffect(() => {
@@ -522,6 +561,7 @@ export default function App() {
                 isAdding={isAdding}
                 setIsAdding={setIsAdding}
                 isProcessingInvite={isProcessingInvite}
+                contacts={contacts}
               />
             </div>
             <div className={cn(
@@ -632,7 +672,7 @@ export default function App() {
   );
 }
 
-function MainLayout({ user, activeTab, setActiveTab, setView, setActiveChat, setModal, moods, avatars, updateMood, updateProfilePhoto, pendingInvites, acceptInvite, declineInvite, setShowAddFriendModal, onClearContacts, isUpdating, isAdding, setIsAdding, isProcessingInvite }: any) {
+function MainLayout({ user, activeTab, setActiveTab, setView, setActiveChat, setModal, moods, avatars, updateMood, updateProfilePhoto, pendingInvites, acceptInvite, declineInvite, setShowAddFriendModal, onClearContacts, isUpdating, isAdding, setIsAdding, isProcessingInvite, contacts }: any) {
   return (
     <div className="flex flex-col md:flex-row h-full bg-white w-full">
       {/* Sidebar Navigation (Desktop) / Bottom Navigation (Mobile) */}
@@ -643,7 +683,7 @@ function MainLayout({ user, activeTab, setActiveTab, setView, setActiveChat, set
             onClick={() => setActiveTab('chats')} 
             icon={<MessageCircle className="w-6 h-6" />} 
             label="Conversas" 
-            badge={true}
+            badge={contacts.some((c: any) => c.hasUnread)}
             user={user}
             inviteBadge={pendingInvites.length > 0}
           />
@@ -659,14 +699,6 @@ function MainLayout({ user, activeTab, setActiveTab, setView, setActiveChat, set
             icon={<Users className="w-6 h-6" />} 
             label="Família" 
           />
-          {user.role === 'parent' && (
-            <NavButton 
-              active={activeTab === 'family'} 
-              onClick={() => setActiveTab('family')} 
-              icon={<Users className="w-6 h-6" />} 
-              label="Família" 
-            />
-          )}
           <div className="md:mt-auto">
             <NavButton 
               active={activeTab === 'settings'} 
@@ -682,8 +714,30 @@ function MainLayout({ user, activeTab, setActiveTab, setView, setActiveChat, set
         <div className="flex-1 overflow-y-auto">
           {activeTab === 'chats' && (
             user.role === 'parent' 
-              ? <ParentDashboard user={user} setView={setView} setActiveChat={setActiveChat} setModal={setModal} pendingInvites={pendingInvites} acceptInvite={acceptInvite} declineInvite={declineInvite} setShowAddFriendModal={setShowAddFriendModal} isProcessingInvite={isProcessingInvite} />
-              : <ChildDashboard user={user} setView={setView} setActiveChat={setActiveChat} setModal={setModal} pendingInvites={pendingInvites} acceptInvite={acceptInvite} declineInvite={declineInvite} setShowAddFriendModal={setShowAddFriendModal} isProcessingInvite={isProcessingInvite} />
+              ? <ParentDashboard 
+                  user={user} 
+                  setView={setView} 
+                  setActiveChat={setActiveChat} 
+                  setModal={setModal} 
+                  pendingInvites={pendingInvites} 
+                  acceptInvite={acceptInvite} 
+                  declineInvite={declineInvite} 
+                  setShowAddFriendModal={setShowAddFriendModal}
+                  isProcessingInvite={isProcessingInvite}
+                  contacts={contacts}
+                /> 
+              : <ChildDashboard 
+                  user={user} 
+                  setView={setView} 
+                  setActiveChat={setActiveChat} 
+                  setModal={setModal} 
+                  pendingInvites={pendingInvites} 
+                  acceptInvite={acceptInvite} 
+                  declineInvite={declineInvite} 
+                  setShowAddFriendModal={setShowAddFriendModal}
+                  isProcessingInvite={isProcessingInvite}
+                  contacts={contacts}
+                />
           )}
           {activeTab === 'calls' && <CallsView user={user} setActiveChat={setActiveChat} setView={setView} setModal={setModal} />}
           {activeTab === 'family' && <FamilyView user={user} setModal={setModal} setView={setView} setActiveChat={setActiveChat} isAdding={isAdding} setIsAdding={setIsAdding} />}
@@ -827,35 +881,7 @@ function RoleSelectView({ onSelect, isSelectingRole }: { onSelect: (role: UserRo
   );
 }
 
-function ParentDashboard({ user, setView, setActiveChat, setModal, pendingInvites, acceptInvite, declineInvite, setShowAddFriendModal, isProcessingInvite }: any) {
-  const [contacts, setContacts] = useState<Contact[]>([]);
-
-  // Listen for parent's own contacts (friends/other parents)
-  useEffect(() => {
-    const q = query(
-      collection(db, 'users_v3', user.uid, 'contacts'), 
-      where('approved', '==', true),
-      orderBy('lastMessageAt', 'desc')
-    );
-    const unsubscribe = onSnapshot(q, (snapshot) => {
-      setContacts(snapshot.docs.map(doc => {
-        const data = doc.data();
-        return { id: doc.id, uid: data.uid || doc.id, ...data } as Contact;
-      }));
-    }, (error) => {
-      // Fallback if index is not ready
-      const fallbackQ = query(collection(db, 'users_v3', user.uid, 'contacts'), where('approved', '==', true));
-      onSnapshot(fallbackQ, (s) => {
-        setContacts(s.docs.map(d => {
-          const data = d.data();
-          return { id: d.id, uid: data.uid || d.id, ...data } as Contact;
-        }));
-      });
-      console.warn("Firestore index error (expected during setup):", error);
-    });
-    return () => unsubscribe();
-  }, [user.uid]);
-
+function ParentDashboard({ user, setView, setActiveChat, setModal, pendingInvites, acceptInvite, declineInvite, setShowAddFriendModal, isProcessingInvite, contacts }: any) {
   return (
     <motion.div 
       initial={{ opacity: 0 }} animate={{ opacity: 1 }}
@@ -998,32 +1024,8 @@ const ChildCard: React.FC<ChildCardProps> = ({ child, onChat, onManage }) => {
   );
 };
 
-function ChildDashboard({ user, setView, setActiveChat, setModal, pendingInvites, acceptInvite, declineInvite, setShowAddFriendModal, isProcessingInvite }: any) {
-  const [contacts, setContacts] = useState<Contact[]>([]);
-
+function ChildDashboard({ user, setView, setActiveChat, setModal, pendingInvites, acceptInvite, declineInvite, setShowAddFriendModal, isProcessingInvite, contacts }: any) {
   useEffect(() => {
-    const q = query(
-      collection(db, 'users_v3', user.uid, 'contacts'), 
-      where('approved', '==', true),
-      orderBy('lastMessageAt', 'desc')
-    );
-    const unsubscribe = onSnapshot(q, (snapshot) => {
-      setContacts(snapshot.docs.map(doc => {
-        const data = doc.data();
-        return { id: doc.id, uid: data.uid || doc.id, ...data } as Contact;
-      }));
-    }, (error) => {
-      // Fallback if index is not ready
-      const fallbackQ = query(collection(db, 'users_v3', user.uid, 'contacts'), where('approved', '==', true));
-      onSnapshot(fallbackQ, (s) => {
-        setContacts(s.docs.map(d => {
-          const data = d.data();
-          return { id: d.id, uid: data.uid || d.id, ...data } as Contact;
-        }));
-      });
-      console.warn("Firestore index error (expected during setup):", error);
-    });
-
     // Auto-add parent as contact if not present
     if (user.parentId) {
       const checkParent = async () => {
@@ -1044,8 +1046,6 @@ function ChildDashboard({ user, setView, setActiveChat, setModal, pendingInvites
       };
       checkParent();
     }
-
-    return () => unsubscribe();
   }, [user.uid, user.parentId]);
 
   return (
@@ -2016,28 +2016,34 @@ function ChatView({ user, contact, onBack, setModal }: { user: UserProfile, cont
     const meetUrl = 'https://meet.google.com/dkh-wqzr-ymg';
     window.open(meetUrl, '_blank');
     
-    setModal({
-      title: 'Iniciar Chamada',
-      message: 'Aguarde o contato entrar na chamada ou cole o link do Google Meet abaixo para enviar.',
-      type: 'confirm',
-      onConfirm: async () => {
-        const url = prompt('Cole o link do Google Meet gerado (opcional):');
-        try {
-          await addDoc(collection(db, 'chats_v3', chatId, 'messages'), {
-            senderId: user.uid,
-            receiverId: contactUid,
-            mediaType: 'call',
-            meetUrl: url || meetUrl,
-            text: 'Iniciou uma videochamada',
-            timestamp: serverTimestamp()
-          });
-        } catch (error) {
-          console.error("Error in addDoc (video call):", error);
-          handleFirestoreError(error, OperationType.WRITE, `chats_v3/${chatId}/messages`);
-        }
-        setModal(null);
-      }
-    });
+    try {
+      await addDoc(collection(db, 'chats_v3', chatId, 'messages'), {
+        senderId: user.uid,
+        receiverId: contactUid,
+        mediaType: 'call',
+        meetUrl: meetUrl,
+        text: 'Iniciou uma videochamada',
+        timestamp: serverTimestamp()
+      });
+
+      // Update lastMessageAt and hasUnread for receiver
+      await setDoc(doc(db, 'users_v3', contactUid, 'contacts', user.uid), {
+        lastMessageAt: serverTimestamp(),
+        lastMessageText: 'Iniciou uma videochamada',
+        hasUnread: true,
+      }, { merge: true });
+
+      // Update for sender
+      await setDoc(doc(db, 'users_v3', user.uid, 'contacts', contactUid), {
+        lastMessageAt: serverTimestamp(),
+        lastMessageText: 'Iniciou uma videochamada',
+        hasUnread: false,
+      }, { merge: true });
+
+    } catch (error) {
+      console.error("Error in addDoc (video call):", error);
+      handleFirestoreError(error, OperationType.WRITE, `chats_v3/${chatId}/messages`);
+    }
   };
 
   const clearChat = async () => {
