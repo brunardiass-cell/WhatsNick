@@ -1175,9 +1175,39 @@ function CallsView({ user, setActiveChat, setView, setModal }: { user: UserProfi
                   <p className="text-xs text-slate-400">Videochamada</p>
                 </div>
                 <button 
-                  onClick={() => {
+                  onClick={async () => {
                     if (contact.meetAuthorized || user.role === 'parent') {
-                      window.open('https://meet.google.com/dkh-wqzr-ymg', '_blank');
+                      const meetUrl = 'https://meet.google.com/dkh-wqzr-ymg';
+                      window.open(meetUrl, '_blank');
+                      
+                      // Send message to chat
+                      const chatId = [user.uid, contact.uid].sort().join('_');
+                      try {
+                        await addDoc(collection(db, 'chats_v3', chatId, 'messages'), {
+                          senderId: user.uid,
+                          receiverId: contact.uid,
+                          mediaType: 'call',
+                          meetUrl: meetUrl,
+                          text: 'iniciar chamada',
+                          timestamp: serverTimestamp()
+                        });
+
+                        // Update lastMessageAt and hasUnread for receiver
+                        await setDoc(doc(db, 'users_v3', contact.uid, 'contacts', user.uid), {
+                          lastMessageAt: serverTimestamp(),
+                          lastMessageText: 'iniciar chamada',
+                          hasUnread: true,
+                        }, { merge: true });
+
+                        // Update for sender
+                        await setDoc(doc(db, 'users_v3', user.uid, 'contacts', contact.uid), {
+                          lastMessageAt: serverTimestamp(),
+                          lastMessageText: 'iniciar chamada',
+                          hasUnread: false,
+                        }, { merge: true });
+                      } catch (error) {
+                        console.error("Error sending call message from CallsView:", error);
+                      }
                     } else {
                       setModal({
                         title: 'Acesso Negado',
@@ -2022,21 +2052,21 @@ function ChatView({ user, contact, onBack, setModal }: { user: UserProfile, cont
         receiverId: contactUid,
         mediaType: 'call',
         meetUrl: meetUrl,
-        text: 'Iniciou uma videochamada',
+        text: 'iniciar chamada',
         timestamp: serverTimestamp()
       });
 
       // Update lastMessageAt and hasUnread for receiver
       await setDoc(doc(db, 'users_v3', contactUid, 'contacts', user.uid), {
         lastMessageAt: serverTimestamp(),
-        lastMessageText: 'Iniciou uma videochamada',
+        lastMessageText: 'iniciar chamada',
         hasUnread: true,
       }, { merge: true });
 
       // Update for sender
       await setDoc(doc(db, 'users_v3', user.uid, 'contacts', contactUid), {
         lastMessageAt: serverTimestamp(),
-        lastMessageText: 'Iniciou uma videochamada',
+        lastMessageText: 'iniciar chamada',
         hasUnread: false,
       }, { merge: true });
 
