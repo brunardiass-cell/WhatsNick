@@ -8,7 +8,7 @@ import { cn } from './utils';
 import { 
   MessageCircle, Shield, Phone, Camera, Send, AlertTriangle, 
   UserPlus, Check, X, LogOut, Settings, User, MapPin, Clock,
-  ChevronLeft, Image as ImageIcon, Smile, Trash2, Video, Users
+  ChevronLeft, Image as ImageIcon, Smile, Trash2, Video, Users, Bell
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { format, isValid } from 'date-fns';
@@ -2076,6 +2076,60 @@ function ChatView({ user, contact, onBack, setModal }: { user: UserProfile, cont
     }
   };
 
+  const callAttention = async () => {
+    try {
+      // Send a message to the chat
+      await addDoc(collection(db, 'chats_v3', chatId, 'messages'), {
+        senderId: user.uid,
+        receiverId: contactUid,
+        text: '🔔 Chamou sua atenção!',
+        timestamp: serverTimestamp()
+      });
+
+      // Update lastMessageAt and hasUnread for receiver
+      await setDoc(doc(db, 'users_v3', contactUid, 'contacts', user.uid), {
+        lastMessageAt: serverTimestamp(),
+        lastMessageText: '🔔 Chamou sua atenção!',
+        hasUnread: true,
+      }, { merge: true });
+
+      // Update for sender
+      await setDoc(doc(db, 'users_v3', user.uid, 'contacts', contactUid), {
+        lastMessageAt: serverTimestamp(),
+        lastMessageText: '🔔 Chamou sua atenção!',
+        hasUnread: false,
+      }, { merge: true });
+
+      // Send email via our API
+      const response = await fetch('/api/attention/email', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          fromName: user.name,
+          toEmail: contact.email,
+          toName: contact.name
+        })
+      });
+
+      if (response.ok) {
+        setModal({
+          title: 'Atenção Chamada!',
+          message: `Um aviso foi enviado para o e-mail de ${contact.name}.`,
+          type: 'alert'
+        });
+      } else {
+        throw new Error('Failed to send email');
+      }
+    } catch (error) {
+      console.error("Error calling attention:", error);
+      setModal({
+        title: 'Atenção Chamada!',
+        message: 'Atenção registrada no chat, mas houve um erro ao enviar o e-mail.',
+        type: 'alert'
+      });
+    }
+  };
+
   const clearChat = async () => {
     setModal({
       title: 'Limpar Conversa',
@@ -2133,6 +2187,13 @@ function ChatView({ user, contact, onBack, setModal }: { user: UserProfile, cont
           <p className="text-[10px] text-[#F48FB1] font-bold uppercase tracking-wider">Online</p>
         </div>
         <div className="flex gap-2">
+          <button 
+            onClick={callAttention}
+            className="p-3 bg-white/10 text-white rounded-2xl hover:bg-white/20 transition-colors"
+            title="Chamar Atenção"
+          >
+            <Bell className="w-6 h-6" />
+          </button>
           {isClearAllowed ? (
             <button 
               onClick={clearChat}
