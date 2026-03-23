@@ -136,6 +136,15 @@ export default function App() {
 
   useEffect(() => {
     let unsubProfile: (() => void) | null = null;
+    
+    // Safety timeout to prevent infinite loading
+    const loadingTimeout = setTimeout(() => {
+      if (loading) {
+        console.warn("Loading taking too long, forcing load state...");
+        setLoading(false);
+      }
+    }, 8000);
+
     const unsubscribe = onAuthStateChanged(auth, async (firebaseUser) => {
       console.log("Auth state changed:", firebaseUser?.uid);
       if (firebaseUser) {
@@ -177,6 +186,7 @@ export default function App() {
     return () => {
       unsubscribe();
       if (unsubProfile) unsubProfile();
+      clearTimeout(loadingTimeout);
     };
   }, []);
 
@@ -226,6 +236,10 @@ export default function App() {
     if (!user || isUpdating) return;
     setSelectedMoodLabel(mood);
     setIsUpdating(true);
+    
+    // Close prompt immediately for better UX
+    setShowMoodPrompt(false);
+    
     try {
       await setDoc(doc(db, 'users_v3', user.uid), { 
         mood, 
@@ -233,10 +247,6 @@ export default function App() {
         moodUpdatedAt: serverTimestamp() 
       }, { merge: true });
       
-      // Close prompt early for better UX
-      setShowMoodPrompt(false);
-      setSelectedMoodLabel(null);
-
       // Update this user's mood in everyone's contact list who has them (background)
       const contactsSnap = await getDocs(collection(db, 'users_v3', user.uid, 'contacts'));
       const updatePromises = contactsSnap.docs.map(async (contactDoc) => {
@@ -249,8 +259,10 @@ export default function App() {
       
       await Promise.all(updatePromises);
     } catch (error) {
-      handleFirestoreError(error, OperationType.WRITE, `users_v3/${user.uid}`);
+      console.error("Error updating mood:", error);
+      // If it failed, we might want to show the prompt again, but for now let's just log
     } finally {
+      setSelectedMoodLabel(null);
       setTimeout(() => setIsUpdating(false), 500); // Prevent double click
     }
   };
@@ -296,7 +308,7 @@ export default function App() {
     const profile: UserProfile = {
       uid: auth.currentUser.uid,
       name: auth.currentUser.displayName || 'Usuário',
-      email: auth.currentUser.email || '',
+      email: (auth.currentUser.email || '').toLowerCase(),
       role,
       photoURL: auth.currentUser.photoURL || ''
     };
@@ -313,13 +325,14 @@ export default function App() {
 
   const sendInvite = async (email: string) => {
     if (!user || !email) return;
-    if (email.toLowerCase() === user.email.toLowerCase()) {
+    const normalizedEmail = email.toLowerCase().trim();
+    if (normalizedEmail === user.email.toLowerCase()) {
       setModal({ title: 'Ops!', message: 'Você não pode enviar um convite para si mesmo.', type: 'alert' });
       return;
     }
     try {
       // Check if already invited
-      const q = query(collection(db, 'pending_contacts_v3'), where('targetEmail', '==', email), where('fromUid', '==', user.uid));
+      const q = query(collection(db, 'pending_contacts_v3'), where('targetEmail', '==', normalizedEmail), where('fromUid', '==', user.uid));
       const snapshot = await getDocs(q);
       if (!snapshot.empty) {
         setModal({ title: 'Aviso', message: 'Convite já enviado para este email.', type: 'alert' });
@@ -327,7 +340,7 @@ export default function App() {
       }
 
       await addDoc(collection(db, 'pending_contacts_v3'), {
-        targetEmail: email,
+        targetEmail: normalizedEmail,
         fromUid: user.uid,
         fromName: user.name,
         fromPhoto: user.photoURL || '',
@@ -1295,8 +1308,9 @@ function FamilyView({ user, setModal, setView, setActiveChat, isAdding, setIsAdd
   const addContact = async () => {
     if (!emailInput || isAdding) return;
     setIsAdding(true);
+    const normalizedEmail = emailInput.toLowerCase().trim();
     try {
-      const q = query(collection(db, 'users_v3'), where('email', '==', emailInput));
+      const q = query(collection(db, 'users_v3'), where('email', '==', normalizedEmail));
       const snapshot = await getDocs(q);
       
       if (snapshot.empty) {
