@@ -98,6 +98,7 @@ export default function App() {
   const [isUpdating, setIsUpdating] = useState(false);
   const [isAdding, setIsAdding] = useState(false);
   const [isProcessingInvite, setIsProcessingInvite] = useState(false);
+  const [selectedMoodLabel, setSelectedMoodLabel] = useState<string | null>(null);
   const [view, setView] = useState<'login' | 'role-select' | 'main' | 'chat'>('login');
   const [activeChat, setActiveChat] = useState<Contact | null>(null);
   const [activeTab, setActiveTab] = useState<'chats' | 'calls' | 'family' | 'settings'>('chats');
@@ -136,9 +137,11 @@ export default function App() {
   useEffect(() => {
     let unsubProfile: (() => void) | null = null;
     const unsubscribe = onAuthStateChanged(auth, async (firebaseUser) => {
+      console.log("Auth state changed:", firebaseUser?.uid);
       if (firebaseUser) {
         // Real-time listener for user profile
         unsubProfile = onSnapshot(doc(db, 'users_v3', firebaseUser.uid), async (userDoc) => {
+          console.log("User profile snapshot received:", userDoc.exists());
           if (userDoc.exists()) {
             const userData = { uid: userDoc.id, ...userDoc.data() } as UserProfile;
             setUser(userData);
@@ -150,8 +153,12 @@ export default function App() {
               setShowMoodPrompt(true);
             }
 
-            if (view === 'login' || view === 'role-select') setView('main');
+            if (view === 'login' || view === 'role-select') {
+              console.log("Setting view to main");
+              setView('main');
+            }
           } else {
+            console.log("User profile not found, setting view to role-select");
             setView('role-select');
           }
           setLoading(false);
@@ -160,6 +167,7 @@ export default function App() {
           setLoading(false);
         });
       } else {
+        console.log("No firebase user, setting view to login");
         if (unsubProfile) unsubProfile();
         setUser(null);
         setView('login');
@@ -216,6 +224,7 @@ export default function App() {
 
   const updateMood = async (mood: string, emoji: string) => {
     if (!user || isUpdating) return;
+    setSelectedMoodLabel(mood);
     setIsUpdating(true);
     try {
       await setDoc(doc(db, 'users_v3', user.uid), { 
@@ -224,7 +233,11 @@ export default function App() {
         moodUpdatedAt: serverTimestamp() 
       }, { merge: true });
       
-      // Update this user's mood in everyone's contact list who has them
+      // Close prompt early for better UX
+      setShowMoodPrompt(false);
+      setSelectedMoodLabel(null);
+
+      // Update this user's mood in everyone's contact list who has them (background)
       const contactsSnap = await getDocs(collection(db, 'users_v3', user.uid, 'contacts'));
       const updatePromises = contactsSnap.docs.map(async (contactDoc) => {
         const contactId = contactDoc.id;
@@ -235,11 +248,9 @@ export default function App() {
       });
       
       await Promise.all(updatePromises);
-      setShowMoodPrompt(false);
     } catch (error) {
       handleFirestoreError(error, OperationType.WRITE, `users_v3/${user.uid}`);
     } finally {
-      setIsUpdating(true);
       setTimeout(() => setIsUpdating(false), 500); // Prevent double click
     }
   };
@@ -446,7 +457,12 @@ export default function App() {
                     <button
                       key={m.label}
                       onClick={() => updateMood(m.label, m.emoji)}
-                      className="flex flex-col items-center gap-1 p-2 rounded-xl hover:bg-slate-100 transition-colors"
+                      disabled={isUpdating}
+                      className={cn(
+                        "flex flex-col items-center gap-1 p-2 rounded-xl transition-all",
+                        selectedMoodLabel === m.label ? "bg-[#F48FB1]/20 scale-110 ring-2 ring-[#F48FB1]" : "hover:bg-slate-100",
+                        isUpdating && selectedMoodLabel !== m.label ? "opacity-50" : ""
+                      )}
                     >
                       <span className="text-3xl">{m.emoji}</span>
                       <span className="text-[10px] text-slate-500 font-medium text-center leading-tight">{m.label}</span>
