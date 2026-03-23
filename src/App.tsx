@@ -459,6 +459,70 @@ export default function App() {
     });
   };
 
+  const handleSOS = async () => {
+    if (!user) return;
+
+    setModal({
+      title: 'Acionar SOS?',
+      message: 'Isso enviará um alerta imediato com sua localização para seus responsáveis.',
+      type: 'confirm',
+      onConfirm: async () => {
+        try {
+          // Get location
+          navigator.geolocation.getCurrentPosition(async (position) => {
+            const { latitude, longitude } = position.coords;
+            const location = { lat: latitude, lng: longitude };
+
+            // Find target email
+            let targetEmail = user.email; // Default to self if no parent
+            if (user.role === 'child' && user.parentId) {
+              const parentDoc = await getDoc(doc(db, 'users_v3', user.parentId));
+              if (parentDoc.exists()) {
+                targetEmail = parentDoc.data().email;
+              }
+            }
+
+            // Send email
+            const response = await fetch('/api/sos/email', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({
+                fromEmail: user.email,
+                toEmail: targetEmail,
+                senderName: user.name,
+                location: location
+              })
+            });
+
+            if (response.ok) {
+              setModal({
+                title: 'SOS Enviado!',
+                message: 'Seus responsáveis foram notificados com sua localização.',
+                type: 'alert'
+              });
+            } else {
+              throw new Error('Falha ao enviar e-mail de SOS');
+            }
+          }, (error) => {
+            console.error("Erro ao obter localização:", error);
+            setModal({
+              title: 'Erro de Localização',
+              message: 'Não foi possível obter sua localização. Verifique as permissões do navegador.',
+              type: 'alert'
+            });
+          });
+        } catch (error) {
+          console.error("Erro no SOS:", error);
+          setModal({
+            title: 'Erro no SOS',
+            message: 'Ocorreu um erro ao processar o alerta SOS.',
+            type: 'alert'
+          });
+        }
+      }
+    });
+  };
+
   if (loading) {
     return (
       <div className="flex flex-col items-center justify-center min-h-screen bg-white p-6">
@@ -562,6 +626,7 @@ export default function App() {
                 setIsAdding={setIsAdding}
                 isProcessingInvite={isProcessingInvite}
                 contacts={contacts}
+                onSOS={handleSOS}
               />
             </div>
             <div className={cn(
@@ -672,7 +737,7 @@ export default function App() {
   );
 }
 
-function MainLayout({ user, activeTab, setActiveTab, setView, setActiveChat, setModal, moods, avatars, updateMood, updateProfilePhoto, pendingInvites, acceptInvite, declineInvite, setShowAddFriendModal, onClearContacts, isUpdating, isAdding, setIsAdding, isProcessingInvite, contacts }: any) {
+function MainLayout({ user, activeTab, setActiveTab, setView, setActiveChat, setModal, moods, avatars, updateMood, updateProfilePhoto, pendingInvites, acceptInvite, declineInvite, setShowAddFriendModal, onClearContacts, isUpdating, isAdding, setIsAdding, isProcessingInvite, contacts, onSOS }: any) {
   return (
     <div className="flex flex-col md:flex-row h-full bg-white w-full">
       {/* Sidebar Navigation (Desktop) / Bottom Navigation (Mobile) */}
@@ -698,6 +763,12 @@ function MainLayout({ user, activeTab, setActiveTab, setView, setActiveChat, set
             onClick={() => setActiveTab('family')} 
             icon={<Users className="w-6 h-6" />} 
             label="Família" 
+          />
+          <NavButton 
+            active={false} 
+            onClick={onSOS} 
+            icon={<AlertTriangle className="w-6 h-6 text-red-500" />} 
+            label="SOS" 
           />
           <div className="md:mt-auto">
             <NavButton 
