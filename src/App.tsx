@@ -3,7 +3,7 @@ import {
   auth, db, googleProvider, signInWithPopup, signOut, onAuthStateChanged,
   collection, doc, setDoc, getDoc, getDocs, query, where, onSnapshot, addDoc, orderBy, serverTimestamp, deleteDoc, updateDoc
 } from './firebase';
-import { UserProfile, Contact, Message, SOSAlert, PendingInvite, UserRole } from './types';
+import { UserProfile, Contact, Message, PendingInvite, UserRole } from './types';
 import { cn } from './utils';
 import { 
   MessageCircle, Shield, Phone, Camera, Send, AlertTriangle, 
@@ -95,7 +95,10 @@ export default function App() {
   const [loading, setLoading] = useState(true);
   const [isLoggingIn, setIsLoggingIn] = useState(false);
   const [isSelectingRole, setIsSelectingRole] = useState(false);
-  const [view, setView] = useState<'login' | 'role-select' | 'main' | 'chat' | 'sos'>('login');
+  const [isUpdating, setIsUpdating] = useState(false);
+  const [isAdding, setIsAdding] = useState(false);
+  const [isProcessingInvite, setIsProcessingInvite] = useState(false);
+  const [view, setView] = useState<'login' | 'role-select' | 'main' | 'chat'>('login');
   const [activeChat, setActiveChat] = useState<Contact | null>(null);
   const [activeTab, setActiveTab] = useState<'chats' | 'calls' | 'family' | 'settings'>('chats');
   const [modal, setModal] = useState<{ type: 'confirm' | 'alert', title: string, message: string, onConfirm?: () => void } | null>(null);
@@ -135,7 +138,7 @@ export default function App() {
     const unsubscribe = onAuthStateChanged(auth, async (firebaseUser) => {
       if (firebaseUser) {
         // Real-time listener for user profile
-        unsubProfile = onSnapshot(doc(db, 'users', firebaseUser.uid), async (userDoc) => {
+        unsubProfile = onSnapshot(doc(db, 'users_v3', firebaseUser.uid), async (userDoc) => {
           if (userDoc.exists()) {
             const userData = { uid: userDoc.id, ...userDoc.data() } as UserProfile;
             setUser(userData);
@@ -174,23 +177,23 @@ export default function App() {
     if (!user) return;
 
     // Real-time listener for incoming pending invites
-    const qInvites = query(collection(db, 'pending_contacts'), where('targetEmail', '==', user.email));
+    const qInvites = query(collection(db, 'pending_contacts_v3'), where('targetEmail', '==', user.email));
     const unsubInvites = onSnapshot(qInvites, (snapshot) => {
       setPendingInvites(snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as PendingInvite)));
     });
 
     // Real-time listener for sent invites that were accepted
-    const qSent = query(collection(db, 'pending_contacts'), where('fromUid', '==', user.uid), where('accepted', '==', true));
+    const qSent = query(collection(db, 'pending_contacts_v3'), where('fromUid', '==', user.uid), where('accepted', '==', true));
     const unsubSent = onSnapshot(qSent, (snapshot) => {
       snapshot.docs.forEach(async (inviteDoc) => {
         const invite = inviteDoc.data() as PendingInvite;
         // Find the user profile for the target email
-        const qUser = query(collection(db, 'users'), where('email', '==', invite.targetEmail));
+        const qUser = query(collection(db, 'users_v3'), where('email', '==', invite.targetEmail));
         const userSnapshot = await getDocs(qUser);
         if (!userSnapshot.empty) {
           const targetUser = userSnapshot.docs[0].data() as UserProfile;
           // Add to current user's contacts
-          await setDoc(doc(db, 'users', user.uid, 'contacts', targetUser.uid), {
+          await setDoc(doc(db, 'users_v3', user.uid, 'contacts', targetUser.uid), {
             uid: targetUser.uid,
             name: targetUser.name,
             photoURL: targetUser.photoURL || '',
@@ -201,7 +204,7 @@ export default function App() {
           });
         }
         // Delete the invite
-        await deleteDoc(doc(db, 'pending_contacts', inviteDoc.id));
+        await deleteDoc(doc(db, 'pending_contacts_v3', inviteDoc.id));
       });
     });
 
@@ -212,19 +215,20 @@ export default function App() {
   }, [user?.uid]);
 
   const updateMood = async (mood: string, emoji: string) => {
-    if (!user) return;
+    if (!user || isUpdating) return;
+    setIsUpdating(true);
     try {
-      await setDoc(doc(db, 'users', user.uid), { 
+      await setDoc(doc(db, 'users_v3', user.uid), { 
         mood, 
         moodEmoji: emoji, 
         moodUpdatedAt: serverTimestamp() 
       }, { merge: true });
       
       // Update this user's mood in everyone's contact list who has them
-      const contactsSnap = await getDocs(collection(db, 'users', user.uid, 'contacts'));
+      const contactsSnap = await getDocs(collection(db, 'users_v3', user.uid, 'contacts'));
       const updatePromises = contactsSnap.docs.map(async (contactDoc) => {
         const contactId = contactDoc.id;
-        return setDoc(doc(db, 'users', contactId, 'contacts', user.uid), {
+        return setDoc(doc(db, 'users_v3', contactId, 'contacts', user.uid), {
           mood,
           moodEmoji: emoji
         }, { merge: true }).catch(() => {});
@@ -233,27 +237,33 @@ export default function App() {
       await Promise.all(updatePromises);
       setShowMoodPrompt(false);
     } catch (error) {
-      handleFirestoreError(error, OperationType.WRITE, `users/${user.uid}`);
+      handleFirestoreError(error, OperationType.WRITE, `users_v3/${user.uid}`);
+    } finally {
+      setIsUpdating(true);
+      setTimeout(() => setIsUpdating(false), 500); // Prevent double click
     }
   };
 
   const updateProfilePhoto = async (photoURL: string) => {
-    if (!user) return;
+    if (!user || isUpdating) return;
+    setIsUpdating(true);
     try {
-      await setDoc(doc(db, 'users', user.uid), { photoURL }, { merge: true });
+      await setDoc(doc(db, 'users_v3', user.uid), { photoURL }, { merge: true });
       
       // Update this user's photo in everyone's contact list who has them
-      const contactsSnap = await getDocs(collection(db, 'users', user.uid, 'contacts'));
+      const contactsSnap = await getDocs(collection(db, 'users_v3', user.uid, 'contacts'));
       const updatePromises = contactsSnap.docs.map(async (contactDoc) => {
         const contactId = contactDoc.id;
-        return setDoc(doc(db, 'users', contactId, 'contacts', user.uid), {
+        return setDoc(doc(db, 'users_v3', contactId, 'contacts', user.uid), {
           photoURL
         }, { merge: true }).catch(() => {});
       });
       
       await Promise.all(updatePromises);
     } catch (error) {
-      handleFirestoreError(error, OperationType.WRITE, `users/${user.uid}`);
+      handleFirestoreError(error, OperationType.WRITE, `users_v3/${user.uid}`);
+    } finally {
+      setIsUpdating(false);
     }
   };
 
@@ -280,11 +290,11 @@ export default function App() {
       photoURL: auth.currentUser.photoURL || ''
     };
     try {
-      await setDoc(doc(db, 'users', auth.currentUser.uid), profile);
+      await setDoc(doc(db, 'users_v3', auth.currentUser.uid), profile);
       setUser(profile);
       setView('main');
     } catch (error) {
-      handleFirestoreError(error, OperationType.WRITE, `users/${auth.currentUser.uid}`);
+      handleFirestoreError(error, OperationType.WRITE, `users_v3/${auth.currentUser.uid}`);
     } finally {
       setIsSelectingRole(false);
     }
@@ -298,14 +308,14 @@ export default function App() {
     }
     try {
       // Check if already invited
-      const q = query(collection(db, 'pending_contacts'), where('targetEmail', '==', email), where('fromUid', '==', user.uid));
+      const q = query(collection(db, 'pending_contacts_v3'), where('targetEmail', '==', email), where('fromUid', '==', user.uid));
       const snapshot = await getDocs(q);
       if (!snapshot.empty) {
         setModal({ title: 'Aviso', message: 'Convite já enviado para este email.', type: 'alert' });
         return;
       }
 
-      await addDoc(collection(db, 'pending_contacts'), {
+      await addDoc(collection(db, 'pending_contacts_v3'), {
         targetEmail: email,
         fromUid: user.uid,
         fromName: user.name,
@@ -317,7 +327,7 @@ export default function App() {
       setShowAddFriendModal(false);
       setModal({ title: 'Sucesso!', message: 'Convite enviado! Assim que a pessoa aceitar, vocês poderão conversar.', type: 'alert' });
     } catch (error) {
-      handleFirestoreError(error, OperationType.WRITE, 'pending_contacts');
+      handleFirestoreError(error, OperationType.WRITE, 'pending_contacts_v3');
     }
   };
 
@@ -325,7 +335,7 @@ export default function App() {
     if (!user) return;
     try {
       // 1. Add sender to my contacts
-      await setDoc(doc(db, 'users', user.uid, 'contacts', invite.fromUid), {
+      await setDoc(doc(db, 'users_v3', user.uid, 'contacts', invite.fromUid), {
         uid: invite.fromUid,
         name: invite.fromName,
         photoURL: invite.fromPhoto || '',
@@ -336,7 +346,7 @@ export default function App() {
       });
 
       // 2. Add me to sender's contacts (Reciprocal)
-      await setDoc(doc(db, 'users', invite.fromUid, 'contacts', user.uid), {
+      await setDoc(doc(db, 'users_v3', invite.fromUid, 'contacts', user.uid), {
         uid: user.uid,
         name: user.name,
         photoURL: user.photoURL || '',
@@ -347,7 +357,7 @@ export default function App() {
       });
 
       // 3. Mark invite as accepted
-      await updateDoc(doc(db, 'pending_contacts', invite.id), {
+      await updateDoc(doc(db, 'pending_contacts_v3', invite.id), {
         accepted: true
       });
 
@@ -359,9 +369,9 @@ export default function App() {
 
   const declineInvite = async (inviteId: string) => {
     try {
-      await deleteDoc(doc(db, 'pending_contacts', inviteId));
+      await deleteDoc(doc(db, 'pending_contacts_v3', inviteId));
     } catch (error) {
-      handleFirestoreError(error, OperationType.DELETE, `pending_contacts/${inviteId}`);
+      handleFirestoreError(error, OperationType.DELETE, `pending_contacts_v3/${inviteId}`);
     }
   };
 
@@ -373,9 +383,9 @@ export default function App() {
       message: 'Tem certeza que deseja remover TODOS os seus contatos? Esta ação não pode ser desfeita.',
       onConfirm: async () => {
         try {
-          const contactsSnap = await getDocs(collection(db, 'users', user.uid, 'contacts'));
+          const contactsSnap = await getDocs(collection(db, 'users_v3', user.uid, 'contacts'));
           const deletePromises = contactsSnap.docs.map(async (contactDoc) => {
-            return deleteDoc(doc(db, 'users', user.uid, 'contacts', contactDoc.id));
+            return deleteDoc(doc(db, 'users_v3', user.uid, 'contacts', contactDoc.id));
           });
           await Promise.all(deletePromises);
           setModal({ type: 'alert', title: 'Sucesso', message: 'Todos os contatos foram removidos.' });
@@ -479,6 +489,10 @@ export default function App() {
                 declineInvite={declineInvite}
                 setShowAddFriendModal={setShowAddFriendModal}
                 onClearContacts={clearAllContacts}
+                isUpdating={isUpdating}
+                isAdding={isAdding}
+                setIsAdding={setIsAdding}
+                isProcessingInvite={isProcessingInvite}
               />
             </div>
             <div className={cn(
@@ -507,7 +521,6 @@ export default function App() {
             </div>
           </div>
         )}
-        {view === 'sos' && user && <SOSView user={user} onBack={() => setView('main')} setModal={setModal} />}
       </AnimatePresence>
 
       {/* Custom Modal */}
@@ -590,7 +603,7 @@ export default function App() {
   );
 }
 
-function MainLayout({ user, activeTab, setActiveTab, setView, setActiveChat, setModal, moods, avatars, updateMood, updateProfilePhoto, pendingInvites, acceptInvite, declineInvite, setShowAddFriendModal, onClearContacts }: any) {
+function MainLayout({ user, activeTab, setActiveTab, setView, setActiveChat, setModal, moods, avatars, updateMood, updateProfilePhoto, pendingInvites, acceptInvite, declineInvite, setShowAddFriendModal, onClearContacts, isUpdating, isAdding, setIsAdding, isProcessingInvite }: any) {
   return (
     <div className="flex flex-col md:flex-row h-full bg-white w-full">
       {/* Sidebar Navigation (Desktop) / Bottom Navigation (Mobile) */}
@@ -619,12 +632,10 @@ function MainLayout({ user, activeTab, setActiveTab, setView, setActiveChat, set
           />
           {user.role === 'parent' && (
             <NavButton 
-              active={activeTab === 'alerts'} 
-              onClick={() => setActiveTab('alerts')} 
-              icon={<AlertTriangle className="w-6 h-6" />} 
-              label="Alertas" 
-              sosBadge={true}
-              user={user}
+              active={activeTab === 'family'} 
+              onClick={() => setActiveTab('family')} 
+              icon={<Users className="w-6 h-6" />} 
+              label="Família" 
             />
           )}
           <div className="md:mt-auto">
@@ -642,12 +653,11 @@ function MainLayout({ user, activeTab, setActiveTab, setView, setActiveChat, set
         <div className="flex-1 overflow-y-auto">
           {activeTab === 'chats' && (
             user.role === 'parent' 
-              ? <ParentDashboard user={user} setView={setView} setActiveChat={setActiveChat} setModal={setModal} pendingInvites={pendingInvites} acceptInvite={acceptInvite} declineInvite={declineInvite} setShowAddFriendModal={setShowAddFriendModal} />
-              : <ChildDashboard user={user} setView={setView} setActiveChat={setActiveChat} setModal={setModal} pendingInvites={pendingInvites} acceptInvite={acceptInvite} declineInvite={declineInvite} setShowAddFriendModal={setShowAddFriendModal} />
+              ? <ParentDashboard user={user} setView={setView} setActiveChat={setActiveChat} setModal={setModal} pendingInvites={pendingInvites} acceptInvite={acceptInvite} declineInvite={declineInvite} setShowAddFriendModal={setShowAddFriendModal} isProcessingInvite={isProcessingInvite} />
+              : <ChildDashboard user={user} setView={setView} setActiveChat={setActiveChat} setModal={setModal} pendingInvites={pendingInvites} acceptInvite={acceptInvite} declineInvite={declineInvite} setShowAddFriendModal={setShowAddFriendModal} isProcessingInvite={isProcessingInvite} />
           )}
           {activeTab === 'calls' && <CallsView user={user} setActiveChat={setActiveChat} setView={setView} setModal={setModal} />}
-          {activeTab === 'family' && <FamilyView user={user} setModal={setModal} setView={setView} setActiveChat={setActiveChat} />}
-          {activeTab === 'alerts' && <AlertsView user={user} setModal={setModal} />}
+          {activeTab === 'family' && <FamilyView user={user} setModal={setModal} setView={setView} setActiveChat={setActiveChat} isAdding={isAdding} setIsAdding={setIsAdding} />}
           {activeTab === 'settings' && (
             <SettingsView 
               user={user} 
@@ -658,6 +668,7 @@ function MainLayout({ user, activeTab, setActiveTab, setView, setActiveChat, set
               updateMood={updateMood}
               updateProfilePhoto={updateProfilePhoto}
               onClearContacts={onClearContacts}
+              isUpdating={isUpdating}
             />
           )}
         </div>
@@ -666,153 +677,17 @@ function MainLayout({ user, activeTab, setActiveTab, setView, setActiveChat, set
   );
 }
 
-function AlertsView({ user, setModal }: { user: UserProfile, setModal: (m: any) => void }) {
-  const [children, setChildren] = useState<UserProfile[]>([]);
-  const [sosAlerts, setSosAlerts] = useState<SOSAlert[]>([]);
-
-  useEffect(() => {
-    if (user.role !== 'parent') return;
-    const q = query(collection(db, 'users'), where('parentId', '==', user.uid));
-    const unsubscribe = onSnapshot(q, (snapshot) => {
-      setChildren(snapshot.docs.map(doc => doc.data() as UserProfile));
-    }, (error) => handleFirestoreError(error, OperationType.LIST, 'users'));
-    return () => unsubscribe();
-  }, [user.uid, user.role]);
-
-  useEffect(() => {
-    if (children.length === 0) return;
-    const childIds = children.map(c => c.uid);
-    const q = query(collection(db, 'sos_alerts'), where('childId', 'in', childIds), orderBy('timestamp', 'desc'));
-    const unsubscribe = onSnapshot(q, (snapshot) => {
-      setSosAlerts(snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as SOSAlert)));
-    }, (error) => handleFirestoreError(error, OperationType.LIST, 'sos_alerts'));
-    return () => unsubscribe();
-  }, [children]);
-
-  const dismissSOS = async (id: string) => {
-    setModal({
-      title: 'Dispensar Alerta',
-      message: 'Tem certeza que deseja dispensar este alerta?',
-      type: 'confirm',
-      onConfirm: async () => {
-        try {
-          await deleteDoc(doc(db, 'sos_alerts', id));
-          setModal({
-            title: 'Sucesso',
-            message: 'Alerta dispensado com sucesso.',
-            type: 'alert'
-          });
-        } catch (error) {
-          console.error("Error deleting SOS alert:", error);
-          setModal({
-            title: 'Erro',
-            message: 'Não foi possível dispensar o alerta. Verifique sua conexão ou permissões.',
-            type: 'alert'
-          });
-          // Still call handleFirestoreError for logging
-          try {
-            handleFirestoreError(error, OperationType.DELETE, `sos_alerts/${id}`);
-          } catch (e) {
-            // handleFirestoreError throws, we just want the log
-          }
-        }
-      }
-    });
-  };
-
-  return (
-    <div className="flex flex-col flex-1 bg-slate-50 min-h-full">
-      <header className="p-6 bg-[#CE93D8] text-white">
-        <h1 className="text-2xl font-bold">Alertas SOS</h1>
-      </header>
-      
-      <main className="flex-1 p-6">
-        {user.role !== 'parent' ? (
-          <div className="flex flex-col items-center justify-center h-full text-slate-400 gap-4 text-center">
-            <Shield className="w-16 h-16 opacity-20" />
-            <p>Apenas pais podem ver alertas SOS.</p>
-          </div>
-        ) : sosAlerts.length === 0 ? (
-          <div className="flex flex-col items-center justify-center h-full text-slate-400 gap-4 text-center">
-            <Check className="w-16 h-16 opacity-20 text-[#F48FB1]" />
-            <p>Tudo tranquilo! Nenhum alerta ativo.</p>
-          </div>
-        ) : (
-          <div className="grid gap-4">
-            {sosAlerts.map(alert => {
-              const child = children.find(c => c.uid === alert.childId);
-              return (
-                <div key={alert.id} className="bg-white border border-red-100 p-5 rounded-[32px] flex items-center gap-4 shadow-md">
-                  <div className="w-14 h-14 bg-red-500 text-white rounded-full flex items-center justify-center shadow-lg animate-pulse">
-                    <AlertTriangle className="w-7 h-7" />
-                  </div>
-                  <div className="flex-1">
-                    <p className="font-bold text-slate-800 text-lg">{child?.name || 'Seu filho'} precisa de ajuda!</p>
-                    <p className="text-xs text-red-500 font-bold">
-                      {alert.timestamp?.toDate && isValid(alert.timestamp.toDate()) ? format(alert.timestamp.toDate(), 'HH:mm - dd/MM') : 'Agora'}
-                    </p>
-                  </div>
-                  <div className="flex flex-col gap-2">
-                    {alert.location && (
-                      <button 
-                        onClick={() => window.open(`https://www.google.com/maps?q=${alert.location.lat},${alert.location.lng}`, '_blank')}
-                        className="p-3 bg-slate-50 text-red-500 rounded-2xl shadow-sm border border-red-50 flex items-center justify-center"
-                      >
-                        <MapPin className="w-5 h-5" />
-                      </button>
-                    )}
-                    <button 
-                      onClick={() => dismissSOS(alert.id)}
-                      className="p-3 bg-red-50 text-red-600 rounded-2xl flex items-center justify-center"
-                    >
-                      <Trash2 className="w-5 h-5" />
-                    </button>
-                  </div>
-                </div>
-              );
-            })}
-          </div>
-        )}
-      </main>
-    </div>
-  );
-}
-
-function NavButton({ active, onClick, icon, label, badge, sosBadge, user, inviteBadge }: any) {
+function NavButton({ active, onClick, icon, label, badge, user, inviteBadge }: any) {
   const [unreadCount, setUnreadCount] = useState(0);
-  const [sosCount, setSosCount] = useState(0);
 
   useEffect(() => {
     if (badge && user) {
-      const q = query(collection(db, 'users', user.uid, 'contacts'), where('hasUnread', '==', true));
+      const q = query(collection(db, 'users_v3', user.uid, 'contacts'), where('hasUnread', '==', true));
       return onSnapshot(q, (snapshot) => {
         setUnreadCount(snapshot.size);
       });
     }
   }, [badge, user]);
-
-  useEffect(() => {
-    if (sosBadge && user && user.role === 'parent') {
-      let unsubscribeSos: (() => void) | undefined;
-      const qChildren = query(collection(db, 'users'), where('parentId', '==', user.uid));
-      const unsubscribeChildren = onSnapshot(qChildren, (snapshot) => {
-        if (unsubscribeSos) unsubscribeSos();
-        const childIds = snapshot.docs.map(doc => doc.id);
-        if (childIds.length > 0) {
-          const qSos = query(collection(db, 'sos_alerts'), where('childId', 'in', childIds));
-          unsubscribeSos = onSnapshot(qSos, (sosSnapshot) => {
-            setSosCount(sosSnapshot.size);
-          });
-        } else {
-          setSosCount(0);
-        }
-      });
-      return () => {
-        unsubscribeChildren();
-        if (unsubscribeSos) unsubscribeSos();
-      };
-    }
-  }, [sosBadge, user]);
 
   return (
     <button 
@@ -834,11 +709,6 @@ function NavButton({ active, onClick, icon, label, badge, sosBadge, user, invite
           {unreadCount || '!'}
         </span>
       ) : null}
-      {sosBadge && sosCount > 0 && (
-        <span className="absolute top-1 right-1 w-5 h-5 bg-red-500 text-white text-[10px] font-bold rounded-full flex items-center justify-center border-2 border-white animate-pulse">
-          {sosCount}
-        </span>
-      )}
     </button>
   );
 }
@@ -928,13 +798,13 @@ function RoleSelectView({ onSelect, isSelectingRole }: { onSelect: (role: UserRo
   );
 }
 
-function ParentDashboard({ user, setView, setActiveChat, setModal, pendingInvites, acceptInvite, declineInvite, setShowAddFriendModal }: any) {
+function ParentDashboard({ user, setView, setActiveChat, setModal, pendingInvites, acceptInvite, declineInvite, setShowAddFriendModal, isProcessingInvite }: any) {
   const [contacts, setContacts] = useState<Contact[]>([]);
 
   // Listen for parent's own contacts (friends/other parents)
   useEffect(() => {
     const q = query(
-      collection(db, 'users', user.uid, 'contacts'), 
+      collection(db, 'users_v3', user.uid, 'contacts'), 
       where('approved', '==', true),
       orderBy('lastMessageAt', 'desc')
     );
@@ -945,7 +815,7 @@ function ParentDashboard({ user, setView, setActiveChat, setModal, pendingInvite
       }));
     }, (error) => {
       // Fallback if index is not ready
-      const fallbackQ = query(collection(db, 'users', user.uid, 'contacts'), where('approved', '==', true));
+      const fallbackQ = query(collection(db, 'users_v3', user.uid, 'contacts'), where('approved', '==', true));
       onSnapshot(fallbackQ, (s) => {
         setContacts(s.docs.map(d => {
           const data = d.data();
@@ -985,10 +855,18 @@ function ParentDashboard({ user, setView, setActiveChat, setModal, pendingInvite
                     <p className="text-[10px] text-slate-400">Quer ser seu amigo</p>
                   </div>
                   <div className="flex gap-2">
-                    <button onClick={() => acceptInvite(invite)} className="p-2 bg-green-500 text-white rounded-lg">
+                    <button 
+                      disabled={isProcessingInvite}
+                      onClick={() => acceptInvite(invite)} 
+                      className="p-2 bg-green-500 text-white rounded-lg disabled:opacity-50"
+                    >
                       <Check className="w-4 h-4" />
                     </button>
-                    <button onClick={() => declineInvite(invite.id)} className="p-2 bg-red-500 text-white rounded-lg">
+                    <button 
+                      disabled={isProcessingInvite}
+                      onClick={() => declineInvite(invite.id)} 
+                      className="p-2 bg-red-500 text-white rounded-lg disabled:opacity-50"
+                    >
                       <X className="w-4 h-4" />
                     </button>
                   </div>
@@ -1091,12 +969,12 @@ const ChildCard: React.FC<ChildCardProps> = ({ child, onChat, onManage }) => {
   );
 };
 
-function ChildDashboard({ user, setView, setActiveChat, setModal, pendingInvites, acceptInvite, declineInvite, setShowAddFriendModal }: any) {
+function ChildDashboard({ user, setView, setActiveChat, setModal, pendingInvites, acceptInvite, declineInvite, setShowAddFriendModal, isProcessingInvite }: any) {
   const [contacts, setContacts] = useState<Contact[]>([]);
 
   useEffect(() => {
     const q = query(
-      collection(db, 'users', user.uid, 'contacts'), 
+      collection(db, 'users_v3', user.uid, 'contacts'), 
       where('approved', '==', true),
       orderBy('lastMessageAt', 'desc')
     );
@@ -1107,7 +985,7 @@ function ChildDashboard({ user, setView, setActiveChat, setModal, pendingInvites
       }));
     }, (error) => {
       // Fallback if index is not ready
-      const fallbackQ = query(collection(db, 'users', user.uid, 'contacts'), where('approved', '==', true));
+      const fallbackQ = query(collection(db, 'users_v3', user.uid, 'contacts'), where('approved', '==', true));
       onSnapshot(fallbackQ, (s) => {
         setContacts(s.docs.map(d => {
           const data = d.data();
@@ -1120,12 +998,12 @@ function ChildDashboard({ user, setView, setActiveChat, setModal, pendingInvites
     // Auto-add parent as contact if not present
     if (user.parentId) {
       const checkParent = async () => {
-        const parentDoc = await getDoc(doc(db, 'users', user.parentId!));
+        const parentDoc = await getDoc(doc(db, 'users_v3', user.parentId!));
         if (parentDoc.exists()) {
           const parentData = parentDoc.data() as UserProfile;
-          const contactDoc = await getDoc(doc(db, 'users', user.uid, 'contacts', user.parentId!));
+          const contactDoc = await getDoc(doc(db, 'users_v3', user.uid, 'contacts', user.parentId!));
           if (!contactDoc.exists()) {
-            await setDoc(doc(db, 'users', user.uid, 'contacts', user.parentId!), {
+            await setDoc(doc(db, 'users_v3', user.uid, 'contacts', user.parentId!), {
               uid: user.parentId,
               name: `Pai/Mãe (${parentData.name})`,
               photoURL: parentData.photoURL || '',
@@ -1157,9 +1035,6 @@ function ChildDashboard({ user, setView, setActiveChat, setModal, pendingInvites
           <button onClick={() => setShowAddFriendModal(true)} className="w-12 h-12 bg-white/20 text-white rounded-2xl flex items-center justify-center">
             <UserPlus className="w-6 h-6" />
           </button>
-          <button onClick={() => setView('sos')} className="w-12 h-12 bg-red-500 text-white rounded-2xl shadow-lg flex items-center justify-center animate-pulse">
-            <AlertTriangle className="w-6 h-6" />
-          </button>
         </div>
       </header>
 
@@ -1176,10 +1051,18 @@ function ChildDashboard({ user, setView, setActiveChat, setModal, pendingInvites
                     <p className="text-[10px] text-slate-500">Quer ser seu amigo!</p>
                   </div>
                   <div className="flex gap-2">
-                    <button onClick={() => acceptInvite(invite)} className="p-3 bg-green-500 text-white rounded-2xl shadow-sm">
+                    <button 
+                      disabled={isProcessingInvite}
+                      onClick={() => acceptInvite(invite)} 
+                      className="p-3 bg-green-500 text-white rounded-2xl shadow-sm disabled:opacity-50"
+                    >
                       <Check className="w-5 h-5" />
                     </button>
-                    <button onClick={() => declineInvite(invite.id)} className="p-3 bg-red-500 text-white rounded-2xl shadow-sm">
+                    <button 
+                      disabled={isProcessingInvite}
+                      onClick={() => declineInvite(invite.id)} 
+                      className="p-3 bg-red-500 text-white rounded-2xl shadow-sm disabled:opacity-50"
+                    >
                       <X className="w-5 h-5" />
                     </button>
                   </div>
@@ -1232,13 +1115,13 @@ function CallsView({ user, setActiveChat, setView, setModal }: { user: UserProfi
   const [contacts, setContacts] = useState<Contact[]>([]);
 
   useEffect(() => {
-    const q = query(collection(db, 'users', user.uid, 'contacts'), where('approved', '==', true));
+    const q = query(collection(db, 'users_v3', user.uid, 'contacts'), where('approved', '==', true));
     const unsubscribe = onSnapshot(q, (snapshot) => {
       setContacts(snapshot.docs.map(doc => {
         const data = doc.data();
         return { id: doc.id, uid: data.uid || doc.id, ...data } as Contact;
       }));
-    }, (error) => handleFirestoreError(error, OperationType.LIST, `users/${user.uid}/contacts`));
+    }, (error) => handleFirestoreError(error, OperationType.LIST, `users_v3/${user.uid}/contacts`));
     return () => unsubscribe();
   }, [user.uid]);
 
@@ -1290,7 +1173,7 @@ function CallsView({ user, setActiveChat, setView, setModal }: { user: UserProfi
   );
 }
 
-function FamilyView({ user, setModal, setView, setActiveChat }: { user: UserProfile, setModal: (m: any) => void, setView: (v: any) => void, setActiveChat: (c: any) => void }) {
+function FamilyView({ user, setModal, setView, setActiveChat, isAdding, setIsAdding }: { user: UserProfile, setModal: (m: any) => void, setView: (v: any) => void, setActiveChat: (c: any) => void, isAdding: boolean, setIsAdding: (v: boolean) => void }) {
   const [familyMembers, setFamilyMembers] = useState<UserProfile[]>([]);
   const [contacts, setContacts] = useState<Contact[]>([]);
   const [showAddChild, setShowAddChild] = useState(false);
@@ -1302,12 +1185,12 @@ function FamilyView({ user, setModal, setView, setActiveChat }: { user: UserProf
 
   useEffect(() => {
     if (user.role === 'parent') {
-      const q = query(collection(db, 'users'), where('parentId', '==', user.uid));
+      const q = query(collection(db, 'users_v3'), where('parentId', '==', user.uid));
       const unsubFamily = onSnapshot(q, (snapshot) => {
         setFamilyMembers(snapshot.docs.map(doc => doc.data() as UserProfile));
       });
 
-      const qContacts = query(collection(db, 'users', user.uid, 'contacts'));
+      const qContacts = query(collection(db, 'users_v3', user.uid, 'contacts'));
       const unsubContacts = onSnapshot(qContacts, (snapshot) => {
         setContacts(snapshot.docs.map(doc => {
           const data = doc.data();
@@ -1317,7 +1200,7 @@ function FamilyView({ user, setModal, setView, setActiveChat }: { user: UserProf
 
       return () => { unsubFamily(); unsubContacts(); };
     } else if (user.parentId) {
-      const q = query(collection(db, 'users'), where('uid', '==', user.parentId));
+      const q = query(collection(db, 'users_v3'), where('uid', '==', user.parentId));
       return onSnapshot(q, (snapshot) => {
         setFamilyMembers(snapshot.docs.map(doc => doc.data() as UserProfile));
       });
@@ -1326,13 +1209,13 @@ function FamilyView({ user, setModal, setView, setActiveChat }: { user: UserProf
 
   useEffect(() => {
     if (selectedChild) {
-      const q = query(collection(db, 'users', selectedChild.uid, 'contacts'));
+      const q = query(collection(db, 'users_v3', selectedChild.uid, 'contacts'));
       const unsubscribe = onSnapshot(q, (snapshot) => {
         setChildContacts(snapshot.docs.map(doc => {
           const data = doc.data();
           return { id: doc.id, uid: data.uid || doc.id, ...data } as Contact;
         }));
-      }, (error) => handleFirestoreError(error, OperationType.LIST, `users/${selectedChild.uid}/contacts`));
+      }, (error) => handleFirestoreError(error, OperationType.LIST, `users_v3/${selectedChild.uid}/contacts`));
       return () => unsubscribe();
     } else {
       setChildContacts([]);
@@ -1340,9 +1223,10 @@ function FamilyView({ user, setModal, setView, setActiveChat }: { user: UserProf
   }, [selectedChild]);
 
   const addChild = async () => {
-    if (!emailInput) return;
+    if (!emailInput || isAdding) return;
+    setIsAdding(true);
     try {
-      const q = query(collection(db, 'users'), where('email', '==', emailInput));
+      const q = query(collection(db, 'users_v3'), where('email', '==', emailInput));
       const snapshot = await getDocs(q);
       
       if (snapshot.empty) {
@@ -1359,10 +1243,10 @@ function FamilyView({ user, setModal, setView, setActiveChat }: { user: UserProf
       }
 
       // Link child to parent
-      await setDoc(doc(db, 'users', childData.uid), { parentId: user.uid }, { merge: true });
+      await setDoc(doc(db, 'users_v3', childData.uid), { parentId: user.uid }, { merge: true });
 
       // Add parent to child's contacts
-      await setDoc(doc(db, 'users', childData.uid, 'contacts', user.uid), {
+      await setDoc(doc(db, 'users_v3', childData.uid, 'contacts', user.uid), {
         uid: user.uid,
         email: user.email,
         name: `Pai/Mãe (${user.name})`,
@@ -1372,7 +1256,7 @@ function FamilyView({ user, setModal, setView, setActiveChat }: { user: UserProf
       });
 
       // Add child to parent's contacts
-      await setDoc(doc(db, 'users', user.uid, 'contacts', childData.uid), {
+      await setDoc(doc(db, 'users_v3', user.uid, 'contacts', childData.uid), {
         uid: childData.uid,
         email: childData.email,
         name: childData.name,
@@ -1386,14 +1270,17 @@ function FamilyView({ user, setModal, setView, setActiveChat }: { user: UserProf
       setShowAddChild(false);
       setModal({ title: 'Sucesso!', message: `${childData.name} foi vinculado à sua família!`, type: 'alert' });
     } catch (error) {
-      handleFirestoreError(error, OperationType.WRITE, 'users');
+      handleFirestoreError(error, OperationType.WRITE, 'users_v3');
+    } finally {
+      setIsAdding(false);
     }
   };
 
   const addContact = async () => {
-    if (!emailInput) return;
+    if (!emailInput || isAdding) return;
+    setIsAdding(true);
     try {
-      const q = query(collection(db, 'users'), where('email', '==', emailInput));
+      const q = query(collection(db, 'users_v3'), where('email', '==', emailInput));
       const snapshot = await getDocs(q);
       
       if (snapshot.empty) {
@@ -1405,7 +1292,7 @@ function FamilyView({ user, setModal, setView, setActiveChat }: { user: UserProf
       const friendData = friendDoc.data() as UserProfile;
       const friendUid = friendDoc.id;
 
-      await setDoc(doc(db, 'users', user.uid, 'contacts', friendUid), {
+      await setDoc(doc(db, 'users_v3', user.uid, 'contacts', friendUid), {
         uid: friendUid,
         email: emailInput,
         name: friendData.name,
@@ -1418,7 +1305,7 @@ function FamilyView({ user, setModal, setView, setActiveChat }: { user: UserProf
         lastMessageAt: serverTimestamp()
       });
 
-      await setDoc(doc(db, 'users', friendUid, 'contacts', user.uid), {
+      await setDoc(doc(db, 'users_v3', friendUid, 'contacts', user.uid), {
         uid: user.uid,
         email: user.email,
         name: user.name,
@@ -1435,7 +1322,9 @@ function FamilyView({ user, setModal, setView, setActiveChat }: { user: UserProf
       setShowAddContact(false);
       setModal({ title: 'Sucesso', message: `Contato ${friendData.name} adicionado!`, type: 'alert' });
     } catch (error) {
-      handleFirestoreError(error, OperationType.WRITE, `users/${user.uid}/contacts`);
+      handleFirestoreError(error, OperationType.WRITE, `users_v3/${user.uid}/contacts`);
+    } finally {
+      setIsAdding(false);
     }
   };
 
@@ -1446,12 +1335,12 @@ function FamilyView({ user, setModal, setView, setActiveChat }: { user: UserProf
       type: 'confirm',
       onConfirm: async () => {
         try {
-          await deleteDoc(doc(db, 'users', user.uid, 'contacts', id));
+          await deleteDoc(doc(db, 'users_v3', user.uid, 'contacts', id));
           setModal({ title: 'Sucesso', message: 'Contato excluído com sucesso.', type: 'alert' });
         } catch (error) {
           console.error("Error deleting contact:", error);
           setModal({ title: 'Erro', message: 'Não foi possível excluir o contato.', type: 'alert' });
-          try { handleFirestoreError(error, OperationType.DELETE, `users/${user.uid}/contacts/${id}`); } catch (e) {}
+          try { handleFirestoreError(error, OperationType.DELETE, `users_v3/${user.uid}/contacts/${id}`); } catch (e) {}
         }
       }
     });
@@ -1460,27 +1349,27 @@ function FamilyView({ user, setModal, setView, setActiveChat }: { user: UserProf
   const toggleApproval = async (contact: Contact) => {
     if (!selectedChild) return;
     try {
-      await setDoc(doc(db, 'users', selectedChild.uid, 'contacts', contact.id), { approved: !contact.approved }, { merge: true });
+      await setDoc(doc(db, 'users_v3', selectedChild.uid, 'contacts', contact.id), { approved: !contact.approved }, { merge: true });
     } catch (error) {
-      handleFirestoreError(error, OperationType.WRITE, `users/${selectedChild.uid}/contacts/${contact.id}`);
+      handleFirestoreError(error, OperationType.WRITE, `users_v3/${selectedChild.uid}/contacts/${contact.id}`);
     }
   };
 
   const toggleMeet = async (contact: Contact) => {
     if (!selectedChild) return;
     try {
-      await setDoc(doc(db, 'users', selectedChild.uid, 'contacts', contact.id), { meetAuthorized: !contact.meetAuthorized }, { merge: true });
+      await setDoc(doc(db, 'users_v3', selectedChild.uid, 'contacts', contact.id), { meetAuthorized: !contact.meetAuthorized }, { merge: true });
     } catch (error) {
-      handleFirestoreError(error, OperationType.WRITE, `users/${selectedChild.uid}/contacts/${contact.id}`);
+      handleFirestoreError(error, OperationType.WRITE, `users_v3/${selectedChild.uid}/contacts/${contact.id}`);
     }
   };
 
   const toggleClearChatPermission = async (contact: Contact) => {
     if (!selectedChild) return;
     try {
-      await setDoc(doc(db, 'users', selectedChild.uid, 'contacts', contact.id), { canClearChat: !contact.canClearChat }, { merge: true });
+      await setDoc(doc(db, 'users_v3', selectedChild.uid, 'contacts', contact.id), { canClearChat: !contact.canClearChat }, { merge: true });
     } catch (error) {
-      handleFirestoreError(error, OperationType.WRITE, `users/${selectedChild.uid}/contacts/${contact.id}`);
+      handleFirestoreError(error, OperationType.WRITE, `users_v3/${selectedChild.uid}/contacts/${contact.id}`);
     }
   };
 
@@ -1492,12 +1381,12 @@ function FamilyView({ user, setModal, setView, setActiveChat }: { user: UserProf
       type: 'confirm',
       onConfirm: async () => {
         try {
-          await deleteDoc(doc(db, 'users', selectedChild.uid, 'contacts', contactId));
+          await deleteDoc(doc(db, 'users_v3', selectedChild.uid, 'contacts', contactId));
           setModal({ title: 'Sucesso', message: 'Contato do filho excluído com sucesso.', type: 'alert' });
         } catch (error) {
           console.error("Error deleting child contact:", error);
           setModal({ title: 'Erro', message: 'Não foi possível excluir o contato do filho.', type: 'alert' });
-          try { handleFirestoreError(error, OperationType.DELETE, `users/${selectedChild.uid}/contacts/${contactId}`); } catch (e) {}
+          try { handleFirestoreError(error, OperationType.DELETE, `users_v3/${selectedChild.uid}/contacts/${contactId}`); } catch (e) {}
         }
       }
     });
@@ -1506,7 +1395,7 @@ function FamilyView({ user, setModal, setView, setActiveChat }: { user: UserProf
   const addFriendForChild = async () => {
     if (!friendEmail || !selectedChild) return;
     try {
-      const q = query(collection(db, 'users'), where('email', '==', friendEmail));
+      const q = query(collection(db, 'users_v3'), where('email', '==', friendEmail));
       const snapshot = await getDocs(q);
       
       if (snapshot.empty) {
@@ -1523,7 +1412,7 @@ function FamilyView({ user, setModal, setView, setActiveChat }: { user: UserProf
       const friendUid = friendDoc.id;
 
       // Add friend to child's contacts
-      await setDoc(doc(db, 'users', selectedChild.uid, 'contacts', friendUid), {
+      await setDoc(doc(db, 'users_v3', selectedChild.uid, 'contacts', friendUid), {
         uid: friendUid,
         email: friendEmail,
         name: friendData.name,
@@ -1537,7 +1426,7 @@ function FamilyView({ user, setModal, setView, setActiveChat }: { user: UserProf
       });
       
       // Reciprocal add
-      await setDoc(doc(db, 'users', friendUid, 'contacts', selectedChild.uid), {
+      await setDoc(doc(db, 'users_v3', friendUid, 'contacts', selectedChild.uid), {
         uid: selectedChild.uid,
         email: selectedChild.email,
         name: selectedChild.name,
@@ -1557,7 +1446,7 @@ function FamilyView({ user, setModal, setView, setActiveChat }: { user: UserProf
         type: 'alert'
       });
     } catch (error) {
-      handleFirestoreError(error, OperationType.WRITE, `users/${selectedChild.uid}/contacts`);
+      handleFirestoreError(error, OperationType.WRITE, `users_v3/${selectedChild.uid}/contacts`);
     }
   };
 
@@ -1608,10 +1497,11 @@ function FamilyView({ user, setModal, setView, setActiveChat }: { user: UserProf
                   className="flex-1 p-3 bg-slate-50 rounded-2xl outline-none border-2 border-transparent focus:border-[#F48FB1]"
                 />
                 <button 
+                  disabled={isAdding}
                   onClick={addFriendForChild}
-                  className="px-6 py-3 bg-[#F48FB1] text-white rounded-2xl font-bold shadow-md"
+                  className="px-6 py-3 bg-[#F48FB1] text-white rounded-2xl font-bold shadow-md disabled:opacity-50"
                 >
-                  Adicionar
+                  {isAdding ? '...' : 'Adicionar'}
                 </button>
               </div>
             </div>
@@ -1766,8 +1656,12 @@ function FamilyView({ user, setModal, setView, setActiveChat }: { user: UserProf
             />
             <div className="flex gap-4">
               <button onClick={() => { setShowAddChild(false); setShowAddContact(false); setEmailInput(''); }} className="flex-1 py-4 text-slate-500 font-bold text-lg">Cancelar</button>
-              <button onClick={showAddChild ? addChild : addContact} className="flex-1 py-4 bg-[#F48FB1] text-white rounded-2xl font-bold text-lg shadow-lg">
-                {showAddChild ? 'Vincular' : 'Adicionar'}
+              <button 
+                disabled={isAdding}
+                onClick={showAddChild ? addChild : addContact} 
+                className="flex-1 py-4 bg-[#F48FB1] text-white rounded-2xl font-bold text-lg shadow-lg disabled:opacity-50"
+              >
+                {isAdding ? '...' : (showAddChild ? 'Vincular' : 'Adicionar')}
               </button>
             </div>
           </motion.div>
@@ -1777,7 +1671,7 @@ function FamilyView({ user, setModal, setView, setActiveChat }: { user: UserProf
   );
 }
 
-function SettingsView({ user, onLogout, setModal, moods, avatars, updateMood, updateProfilePhoto, onClearContacts }: { user: UserProfile, onLogout: () => void, setModal: (m: any) => void, moods: any[], avatars: string[], updateMood: (m: string, e: string) => void, updateProfilePhoto: (url: string) => Promise<void>, onClearContacts: () => void }) {
+function SettingsView({ user, onLogout, setModal, moods, avatars, updateMood, updateProfilePhoto, onClearContacts, isUpdating }: { user: UserProfile, onLogout: () => void, setModal: (m: any) => void, moods: any[], avatars: string[], updateMood: (m: string, e: string) => void, updateProfilePhoto: (url: string) => Promise<void>, onClearContacts: () => void, isUpdating: boolean }) {
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [uploading, setUploading] = useState(false);
 
@@ -1855,9 +1749,10 @@ function SettingsView({ user, onLogout, setModal, moods, avatars, updateMood, up
             {moods.map((m) => (
               <button
                 key={m.label}
+                disabled={isUpdating}
                 onClick={() => updateMood(m.label, m.emoji)}
                 className={cn(
-                  "flex flex-col items-center gap-1 p-3 rounded-2xl border transition-all",
+                  "flex flex-col items-center gap-1 p-3 rounded-2xl border transition-all disabled:opacity-50",
                   user.mood === m.label ? "bg-[#F48FB1]/10 border-[#F48FB1]" : "bg-white border-slate-100 hover:border-[#F48FB1]/30"
                 )}
               >
@@ -1877,9 +1772,10 @@ function SettingsView({ user, onLogout, setModal, moods, avatars, updateMood, up
             {avatars.map((url, i) => (
               <button
                 key={i}
+                disabled={isUpdating}
                 onClick={() => selectAvatar(url)}
                 className={cn(
-                  "aspect-square rounded-2xl border overflow-hidden transition-all",
+                  "aspect-square rounded-2xl border overflow-hidden transition-all disabled:opacity-50",
                   user.photoURL === url ? "border-[#81D4FA] border-4" : "border-slate-100 hover:border-[#81D4FA]/30"
                 )}
               >
@@ -1925,7 +1821,7 @@ function ChatView({ user, contact, onBack, setModal }: { user: UserProfile, cont
 
   useEffect(() => {
     if (!chatId || !user.uid || !contactUid) return;
-    const q = query(collection(db, 'chats', chatId, 'messages'), orderBy('timestamp', 'asc'));
+    const q = query(collection(db, 'chats_v3', chatId, 'messages'), orderBy('timestamp', 'asc'));
     const unsubscribe = onSnapshot(q, { includeMetadataChanges: true }, (snapshot) => {
       try {
         const newMessages = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as Message));
@@ -1936,7 +1832,7 @@ function ChatView({ user, contact, onBack, setModal }: { user: UserProfile, cont
           const lastMsg = newMessages[newMessages.length - 1];
           // Only clear if the last message was from the other person
           if (lastMsg.senderId !== user.uid) {
-            setDoc(doc(db, 'users', user.uid, 'contacts', contactUid), { 
+            setDoc(doc(db, 'users_v3', user.uid, 'contacts', contactUid), { 
               hasUnread: false 
             }, { merge: true }).catch(e => console.error("Error clearing unread:", e));
           }
@@ -1953,11 +1849,11 @@ function ChatView({ user, contact, onBack, setModal }: { user: UserProfile, cont
       }
     }, (error) => {
       // Fallback if index is not ready
-      const fallbackQ = query(collection(db, 'chats', chatId, 'messages'));
+      const fallbackQ = query(collection(db, 'chats_v3', chatId, 'messages'));
       onSnapshot(fallbackQ, (s) => {
         setMessages(s.docs.map(d => ({ id: d.id, ...d.data() } as Message)));
       });
-      handleFirestoreError(error, OperationType.LIST, `chats/${chatId}/messages`);
+      handleFirestoreError(error, OperationType.LIST, `chats_v3/${chatId}/messages`);
     });
     return () => unsubscribe();
   }, [chatId, user.uid, contactUid]);
@@ -1983,14 +1879,14 @@ function ChatView({ user, contact, onBack, setModal }: { user: UserProfile, cont
       
       // Add message
       try {
-        await addDoc(collection(db, 'chats', chatId, 'messages'), messageData);
+        await addDoc(collection(db, 'chats_v3', chatId, 'messages'), messageData);
       } catch (error) {
         console.error("Error in addDoc:", error);
         throw error;
       }
       
       // Update lastMessageAt and hasUnread for receiver
-      await setDoc(doc(db, 'users', contactUid, 'contacts', user.uid), {
+      await setDoc(doc(db, 'users_v3', contactUid, 'contacts', user.uid), {
         uid: user.uid,
         name: user.name,
         photoURL: user.photoURL || '',
@@ -2000,7 +1896,7 @@ function ChatView({ user, contact, onBack, setModal }: { user: UserProfile, cont
       }, { merge: true });
 
       // Update lastMessageAt for sender
-      await setDoc(doc(db, 'users', user.uid, 'contacts', contactUid), {
+      await setDoc(doc(db, 'users_v3', user.uid, 'contacts', contactUid), {
         uid: contactUid,
         lastMessageAt: serverTimestamp(),
         hasUnread: false,
@@ -2008,7 +1904,7 @@ function ChatView({ user, contact, onBack, setModal }: { user: UserProfile, cont
       }, { merge: true });
 
     } catch (error) {
-      handleFirestoreError(error, OperationType.WRITE, `chats/${chatId}/messages`);
+      handleFirestoreError(error, OperationType.WRITE, `chats_v3/${chatId}/messages`);
     } finally {
       setIsSending(false);
     }
@@ -2067,7 +1963,7 @@ function ChatView({ user, contact, onBack, setModal }: { user: UserProfile, cont
       const compressedBase64 = await compressImage(rawBase64);
       
       try {
-        await addDoc(collection(db, 'chats', chatId, 'messages'), {
+        await addDoc(collection(db, 'chats_v3', chatId, 'messages'), {
           senderId: user.uid,
           receiverId: contactUid,
           mediaUrl: compressedBase64,
@@ -2076,7 +1972,7 @@ function ChatView({ user, contact, onBack, setModal }: { user: UserProfile, cont
         });
       } catch (error) {
         console.error("Error in addDoc (file upload):", error);
-        handleFirestoreError(error, OperationType.WRITE, `chats/${chatId}/messages`);
+        handleFirestoreError(error, OperationType.WRITE, `chats_v3/${chatId}/messages`);
       }
     };
     reader.readAsDataURL(file);
@@ -2097,7 +1993,7 @@ function ChatView({ user, contact, onBack, setModal }: { user: UserProfile, cont
       onConfirm: async () => {
         const url = prompt('Cole o link do Google Meet gerado (opcional):');
         try {
-          await addDoc(collection(db, 'chats', chatId, 'messages'), {
+          await addDoc(collection(db, 'chats_v3', chatId, 'messages'), {
             senderId: user.uid,
             receiverId: contactUid,
             mediaType: 'call',
@@ -2107,85 +2003,9 @@ function ChatView({ user, contact, onBack, setModal }: { user: UserProfile, cont
           });
         } catch (error) {
           console.error("Error in addDoc (video call):", error);
-          handleFirestoreError(error, OperationType.WRITE, `chats/${chatId}/messages`);
+          handleFirestoreError(error, OperationType.WRITE, `chats_v3/${chatId}/messages`);
         }
         setModal(null);
-      }
-    });
-  };
-
-  const sendSOS = async () => {
-    setModal({
-      title: 'Enviar SOS',
-      message: 'Deseja enviar um alerta SOS para este contato e seus responsáveis?',
-      type: 'confirm',
-      onConfirm: async () => {
-        try {
-          const messageData = {
-            senderId: user.uid,
-            receiverId: contactUid,
-            text: '🚨 ALERTA SOS! Preciso de ajuda!',
-            mediaType: 'text',
-            timestamp: serverTimestamp(),
-            isSOS: true
-          };
-          
-          try {
-            await addDoc(collection(db, 'chats', chatId, 'messages'), messageData);
-          } catch (error) {
-            console.error("Error in addDoc (SOS message):", error);
-            throw error;
-          }
-          
-          // Get location
-          const pos: any = await new Promise((resolve) => {
-            navigator.geolocation.getCurrentPosition(resolve, () => resolve(null), { timeout: 5000 });
-          });
-          const location = pos ? { lat: pos.coords.latitude, lng: pos.coords.longitude } : null;
-          
-          if (user.role === 'child') {
-            await addDoc(collection(db, 'sos_alerts'), {
-              childId: user.uid,
-              timestamp: serverTimestamp(),
-              message: "SOS via Chat",
-              location
-            });
-          }
-
-          // Send email via backend to the person being chatted with
-          let toEmail = contact.email;
-          if (!toEmail) {
-            try {
-              const contactDoc = await getDoc(doc(db, 'users', contactUid));
-              if (contactDoc.exists()) {
-                toEmail = (contactDoc.data() as UserProfile).email;
-              }
-            } catch (e) {
-              console.error("Error fetching contact email for SOS:", e);
-            }
-          }
-
-          if (toEmail && user.email) {
-            fetch('/api/sos/email', {
-              method: 'POST',
-              headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({
-                fromEmail: user.email,
-                toEmail: toEmail,
-                senderName: user.name,
-                location
-              })
-            }).catch(e => console.error("Error sending SOS email:", e));
-          }
-
-          setModal({
-            title: 'SOS Enviado',
-            message: 'Seu alerta foi enviado com sucesso para o contato e registrado no sistema.',
-            type: 'alert'
-          });
-        } catch (error) {
-          handleFirestoreError(error, OperationType.WRITE, `chats/${chatId}/messages`);
-        }
       }
     });
   };
@@ -2197,13 +2017,13 @@ function ChatView({ user, contact, onBack, setModal }: { user: UserProfile, cont
       type: 'confirm',
       onConfirm: async () => {
         try {
-          const q = query(collection(db, 'chats', chatId, 'messages'));
+          const q = query(collection(db, 'chats_v3', chatId, 'messages'));
           const snapshot = await getDocs(q);
-          const deletePromises = snapshot.docs.map(d => deleteDoc(doc(db, 'chats', chatId, 'messages', d.id)));
+          const deletePromises = snapshot.docs.map(d => deleteDoc(doc(db, 'chats_v3', chatId, 'messages', d.id)));
           await Promise.all(deletePromises);
           
           // Update last message in contacts
-          await setDoc(doc(db, 'users', user.uid, 'contacts', contactUid), {
+          await setDoc(doc(db, 'users_v3', user.uid, 'contacts', contactUid), {
             lastMessageText: '',
             hasUnread: false
           }, { merge: true });
@@ -2214,7 +2034,7 @@ function ChatView({ user, contact, onBack, setModal }: { user: UserProfile, cont
             type: 'alert'
           });
         } catch (error) {
-          handleFirestoreError(error, OperationType.DELETE, `chats/${chatId}/messages`);
+          handleFirestoreError(error, OperationType.DELETE, `chats_v3/${chatId}/messages`);
         }
       }
     });
@@ -2268,12 +2088,6 @@ function ChatView({ user, contact, onBack, setModal }: { user: UserProfile, cont
               <Trash2 className="w-6 h-6" />
             </button>
           )}
-          <button 
-            onClick={sendSOS}
-            className="p-3 bg-red-500 text-white rounded-2xl hover:bg-red-600 transition-colors shadow-lg"
-          >
-            <AlertTriangle className="w-6 h-6" />
-          </button>
           {isMeetAllowed ? (
             <button className="p-3 bg-white/10 text-white rounded-2xl hover:bg-white/20 transition-colors" onClick={startVideoCall}>
               <Video className="w-6 h-6" />
@@ -2307,8 +2121,7 @@ function ChatView({ user, contact, onBack, setModal }: { user: UserProfile, cont
                 "max-w-[85%] p-3 rounded-2xl shadow-sm relative animate-in fade-in slide-in-from-bottom-2 duration-300",
                 msg.senderId === user.uid 
                   ? "self-end bg-[#F48FB1] text-white rounded-tr-none" 
-                  : "self-start bg-white text-slate-800 rounded-tl-none",
-                (msg as any).isSOS && "border-2 border-red-500 bg-red-50"
+                  : "self-start bg-white text-slate-800 rounded-tl-none"
               )}>
                 {msg.mediaType === 'image' ? (
                   <img src={msg.mediaUrl} className="rounded-xl mb-1 max-w-full" alt="" />
@@ -2330,7 +2143,7 @@ function ChatView({ user, contact, onBack, setModal }: { user: UserProfile, cont
                     </button>
                   </div>
                 ) : (
-                  <p className={cn("text-sm break-words", (msg as any).isSOS && "font-bold text-red-600")}>
+                  <p className="text-sm break-words">
                     {(msg.text || '').split(/(https?:\/\/[^\s]+)/g).map((part, i) => 
                       part.match(/^https?:\/\//) ? (
                         <a key={i} href={part} target="_blank" rel="noopener noreferrer" className="underline font-bold break-all">
@@ -2423,118 +2236,6 @@ function ChatView({ user, contact, onBack, setModal }: { user: UserProfile, cont
           </button>
         </div>
       </div>
-    </motion.div>
-  );
-}
-
-function SOSView({ user, onBack, setModal }: { user: UserProfile, onBack: () => void, setModal: (m: any) => void }) {
-  const [countdown, setCountdown] = useState(5);
-  const [triggered, setTriggered] = useState(false);
-
-  useEffect(() => {
-    if (countdown > 0 && !triggered) {
-      const timer = setTimeout(() => setCountdown(countdown - 1), 1000);
-      return () => clearTimeout(timer);
-    } else if (countdown === 0 && !triggered) {
-      triggerSOS();
-    }
-  }, [countdown, triggered]);
-
-  const triggerSOS = async () => {
-    setTriggered(true);
-    try {
-      const pos: any = await new Promise((resolve) => {
-        navigator.geolocation.getCurrentPosition(resolve, () => resolve(null));
-      });
-      const location = pos ? { lat: pos.coords.latitude, lng: pos.coords.longitude } : null;
-
-      try {
-        await addDoc(collection(db, 'sos_alerts'), {
-          childId: user.uid,
-          timestamp: serverTimestamp(),
-          message: "Preciso de ajuda!",
-          location
-        });
-      } catch (error) {
-        console.error("Error in addDoc (SOS alert):", error);
-        throw error;
-      }
-      
-      // Notify parents via email
-      if (user.parentId && user.email) {
-        const parentDoc = await getDoc(doc(db, 'users', user.parentId));
-        if (parentDoc.exists()) {
-          const parentData = parentDoc.data() as UserProfile;
-          if (parentData.email) {
-            fetch('/api/sos/email', {
-              method: 'POST',
-              headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({
-                fromEmail: user.email,
-                toEmail: parentData.email,
-                senderName: user.name,
-                location
-              })
-            }).catch(e => console.error("Error sending SOS email:", e));
-          }
-        }
-      }
-
-      console.log("SOS Triggered! Parents notified.");
-    } catch (error) {
-      handleFirestoreError(error, OperationType.WRITE, 'sos_alerts');
-    }
-  };
-
-  return (
-    <motion.div 
-      initial={{ scale: 0.8, opacity: 0 }} animate={{ scale: 1, opacity: 1 }}
-      className="flex flex-col flex-1 bg-red-600 text-white p-8 items-center justify-center text-center"
-    >
-      {!triggered ? (
-        <>
-          <div className="w-32 h-32 bg-white/20 rounded-full flex items-center justify-center mb-8 animate-ping">
-            <AlertTriangle className="w-20 h-20" />
-          </div>
-          <h2 className="text-4xl font-bold mb-4">Botão SOS</h2>
-          <p className="text-xl mb-12 opacity-90">Avisando seus pais em...</p>
-          <div className="text-9xl font-black mb-12">{countdown}</div>
-          <button 
-            onClick={onBack}
-            className="w-full py-5 bg-white text-red-600 rounded-3xl font-bold text-2xl shadow-2xl"
-          >
-            CANCELAR
-          </button>
-        </>
-      ) : (
-        <>
-          <div className="w-32 h-32 bg-white rounded-full flex items-center justify-center mb-8">
-            <Check className="w-20 h-20 text-[#F48FB1]" />
-          </div>
-          <h2 className="text-4xl font-bold mb-4">Aviso Enviado!</h2>
-          <p className="text-xl mb-4 opacity-90">Seus pais já sabem que você precisa de ajuda e estão vindo!</p>
-          <div className="bg-white/20 p-4 rounded-2xl mb-8 flex items-center gap-3">
-            <Check className="w-5 h-5" />
-            <span className="text-sm">Email enviado para os responsáveis</span>
-          </div>
-          <div className="bg-white/10 p-6 rounded-3xl w-full text-left mb-12">
-            <div className="flex items-center gap-3 mb-2">
-              <MapPin className="w-5 h-5" />
-              <span className="font-bold">Localização enviada</span>
-            </div>
-            <div className="flex items-center gap-3">
-              <Clock className="w-5 h-5" />
-              <span className="font-bold">{format(new Date(), 'HH:mm')}</span>
-            </div>
-          </div>
-          <button 
-            onClick={onBack}
-            className="w-full py-5 bg-white/20 border-2 border-white rounded-3xl font-bold text-2xl"
-          >
-            VOLTAR
-          </button>
-        </>
-      )}
     </motion.div>
   );
 }

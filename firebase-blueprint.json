@@ -45,42 +45,24 @@
         "timestamp": { "type": "string", "format": "date-time" }
       },
       "required": ["senderId", "receiverId", "timestamp"]
-    },
-    "SOSAlert": {
-      "title": "SOSAlert",
-      "description": "Emergency alert from a child",
-      "type": "object",
-      "properties": {
-        "childId": { "type": "string" },
-        "location": {
-          "type": "object",
-          "properties": {
-            "lat": { "type": "number" },
-            "lng": { "type": "number" }
-          }
-        },
-        "timestamp": { "type": "string", "format": "date-time" },
-        "message": { "type": "string" }
-      },
-      "required": ["childId", "timestamp"]
     }
   },
   "firestore": {
-    "/users/{userId}": {
+    "/users_v3/{userId}": {
       "schema": "User",
       "description": "User profiles"
     },
-    "/users/{userId}/contacts/{contactId}": {
+    "/users_v3/{userId}/contacts/{contactId}": {
       "schema": "Contact",
       "description": "Authorized contacts for a child"
     },
-    "/chats/{chatId}/messages/{messageId}": {
+    "/chats_v3/{chatId}/messages/{messageId}": {
       "schema": "Message",
       "description": "Messages in a chat session"
     },
-    "/sos_alerts/{alertId}": {
-      "schema": "SOSAlert",
-      "description": "Emergency alerts"
+    "/pending_contacts_v3/{inviteId}": {
+      "schema": "PendingInvite",
+      "description": "Pending contact invites"
     }
   }
 }

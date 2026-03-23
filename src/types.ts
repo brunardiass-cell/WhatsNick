@@ -42,17 +42,6 @@ export interface Message {
   timestamp: any;
 }
 
-export interface SOSAlert {
-  id: string;
-  childId: string;
-  location?: {
-    lat: number;
-    lng: number;
-  };
-  timestamp: any;
-  message: string;
-}
-
 export interface PendingInvite {
   id: string;
   targetEmail: string;

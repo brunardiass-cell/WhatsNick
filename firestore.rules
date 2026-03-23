@@ -5,7 +5,7 @@ service cloud.firestore {
     // Assumed Data Model
     // ===============================================================
     //
-    // Collection: users
+    // Collection: users_v3
     // Document ID: {userId}
     // Fields:
     //   - uid: string (required)
@@ -15,7 +15,7 @@ service cloud.firestore {
     //   - parentId: string (optional, for children)
     //   - photoURL: string (optional)
     //
-    // Collection: users/{userId}/contacts
+    // Collection: users_v3/{userId}/contacts
     // Document ID: {contactId}
     // Fields:
     //   - uid: string (required)
@@ -24,7 +24,7 @@ service cloud.firestore {
     //   - childId: string (required)
     //   - meetAuthorized: bool (optional)
     //
-    // Collection: pending_contacts
+    // Collection: pending_contacts_v3
     // Document ID: {inviteId}
     // Fields:
     //   - targetEmail: string (required)
@@ -33,7 +33,7 @@ service cloud.firestore {
     //   - fromPhoto: string (optional)
     //   - timestamp: timestamp (required)
     //
-    // Collection: chats/{chatId}/messages
+    // Collection: chats_v3/{chatId}/messages
     // Document ID: {messageId}
     // Fields:
     //   - senderId: string (required)
@@ -42,14 +42,6 @@ service cloud.firestore {
     //   - mediaUrl: string (optional)
     //   - mediaType: string (required, 'text' | 'image')
     //   - timestamp: timestamp (required)
-    //
-    // Collection: sos_alerts
-    // Document ID: {alertId}
-    // Fields:
-    //   - childId: string (required)
-    //   - location: map (optional)
-    //   - timestamp: timestamp (required)
-    //   - message: string (required)
     //
     // ===============================================================
 
@@ -67,12 +59,12 @@ service cloud.firestore {
 
     function isParentOf(childId) {
       return isAuthenticated() && 
-        get(/databases/$(database)/documents/users/$(childId)).data.parentId == request.auth.uid;
+        get(/databases/$(database)/documents/users_v3/$(childId)).data.parentId == request.auth.uid;
     }
 
     function isAdmin() {
       return isAuthenticated() &&
-        (get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'admin' ||
+        (get(/databases/$(database)/documents/users_v3/$(request.auth.uid)).data.role == 'admin' ||
           (request.auth.token.email == "brunardiass@gmail.com" && request.auth.token.email_verified == true));
     }
 
@@ -127,11 +119,6 @@ service cloud.firestore {
              data.mediaType in ['text', 'image', 'call'];
     }
 
-    function isValidSOS(data) {
-      return hasRequiredFields(['childId', 'timestamp', 'message']) &&
-             data.childId is string && data.message is string && data.message.size() < 500;
-    }
-
     function isContactSelfUpdate(contactId) {
       return isAuthenticated() && 
              request.auth.uid == contactId && 
@@ -143,7 +130,7 @@ service cloud.firestore {
     // Rules
     // ===============================================================
 
-    match /users/{userId} {
+    match /users_v3/{userId} {
       allow read: if isAuthenticated(); 
       allow create: if isAuthenticated() && isValidUser(request.resource.data) && (request.auth.uid == userId);
       allow update: if isAuthenticated() && isValidUser(request.resource.data) && 
@@ -159,7 +146,7 @@ service cloud.firestore {
       }
     }
 
-    match /pending_contacts/{inviteId} {
+    match /pending_contacts_v3/{inviteId} {
       allow read: if isAuthenticated() && (request.auth.token.email == resource.data.targetEmail || request.auth.uid == resource.data.fromUid || isAdmin());
       allow create: if isAuthenticated() && isValidPendingContact(request.resource.data) && request.resource.data.fromUid == request.auth.uid;
       allow update: if isAuthenticated() && (request.auth.token.email == resource.data.targetEmail) && 
@@ -168,7 +155,7 @@ service cloud.firestore {
       allow delete: if isAuthenticated() && (request.auth.token.email == resource.data.targetEmail || request.auth.uid == resource.data.fromUid || isAdmin());
     }
 
-    match /chats/{chatId} {
+    match /chats_v3/{chatId} {
       allow read: if isAuthenticated() && (chatId.split('_').hasAny([request.auth.uid]) || isAdmin());
       
       match /messages/{messageId} {
@@ -176,12 +163,6 @@ service cloud.firestore {
         allow create: if isAuthenticated() && (request.resource.data.senderId == request.auth.uid);
         allow delete: if isAuthenticated() && (chatId.split('_').hasAny([request.auth.uid]) || isAdmin());
       }
-    }
-
-    match /sos_alerts/{alertId} {
-      allow read: if isAuthenticated() && (isParentOf(resource.data.childId) || isAdmin());
-      allow create: if isAuthenticated() && (request.resource.data.childId == request.auth.uid) && isValidSOS(request.resource.data);
-      allow delete: if isAuthenticated() && (isParentOf(resource.data.childId) || isAdmin());
     }
 
     // Default deny
