@@ -2,7 +2,7 @@ import { Timestamp } from 'firebase/firestore';
 
 export type UserRole = 'parent' | 'child';
 
-export type MascotType = 'cat' | 'bear' | 'dog';
+export type MascotType = 'cat' | 'bear' | 'dog' | 'none';
 export type StatusType = 'brincando' | 'estudando' | 'dormindo' | 'conversando' | 'trabalhando' | 'comendo' | 'arrumando';
 
 export interface UserProfile {

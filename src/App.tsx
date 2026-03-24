@@ -1341,10 +1341,29 @@ function CallsView({ user, setActiveChat, setView, setModal }: { user: UserProfi
     return () => unsubscribe();
   }, [user.uid]);
 
+  const copyLink = () => {
+    const link = 'https://meet.google.com/dkh-wqzr-ymg';
+    navigator.clipboard.writeText(link).then(() => {
+      setModal({
+        title: 'Link Copiado!',
+        message: 'O link da reunião foi copiado para sua área de transferência.',
+        type: 'alert'
+      });
+    });
+  };
+
   return (
     <div className="flex flex-col flex-1 bg-white">
-      <header className="p-6 border-b bg-[#CE93D8] text-white">
+      <header className="p-6 border-b bg-[#F48FB1] text-white">
         <h1 className="text-2xl font-bold">Ligações</h1>
+        <div className="mt-4">
+          <button 
+            onClick={copyLink}
+            className="bg-white/20 hover:bg-white/30 text-white px-4 py-2 rounded-xl text-sm font-bold transition-colors flex items-center gap-2"
+          >
+            Ver o link
+          </button>
+        </div>
       </header>
       <div className="flex-1 overflow-y-auto p-4">
         {contacts.length === 0 ? (
@@ -1724,7 +1743,7 @@ function FamilyView({ user, setModal, setView, setActiveChat, isAdding, setIsAdd
 
   return (
     <div className="flex flex-col flex-1 bg-slate-50 min-h-full">
-      <header className="p-6 border-b bg-[#CE93D8] text-white flex items-center gap-4">
+      <header className="p-6 border-b bg-[#FFCC80] text-white flex items-center gap-4">
         {selectedChild && (
           <button onClick={() => setSelectedChild(null)} className="p-1 hover:bg-white/10 rounded-full">
             <ChevronLeft className="w-6 h-6" />
@@ -1981,7 +2000,7 @@ function SettingsView({ user, onLogout, setModal, moods, avatars, updateMood, up
 
   return (
     <div className="flex flex-col h-full bg-slate-50">
-      <header className="p-6 bg-[#CE93D8] text-white shrink-0 shadow-md">
+      <header className="p-6 bg-[#A5D6A7] text-white shrink-0 shadow-md">
         <h2 className="text-2xl font-bold">Ajustes</h2>
       </header>
 
@@ -2206,6 +2225,7 @@ const STATUS_OPTIONS: { label: StatusType, icon: any, color: string, description
 ];
 
 const MASCOT_OPTIONS: { type: MascotType, emoji: string, label: string }[] = [
+  { type: 'none', emoji: '🚫', label: 'Nenhum' },
   { type: 'cat', emoji: '🐱', label: 'Gatinho' },
   { type: 'bear', emoji: '🐻', label: 'Ursinho' },
   { type: 'dog', emoji: '🐶', label: 'Cachorrinho' },
