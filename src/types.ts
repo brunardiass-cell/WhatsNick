@@ -2,6 +2,9 @@ import { Timestamp } from 'firebase/firestore';
 
 export type UserRole = 'parent' | 'child';
 
+export type MascotType = 'cat' | 'bear' | 'dog';
+export type StatusType = 'brincando' | 'estudando' | 'dormindo' | 'conversando' | 'trabalhando' | 'comendo' | 'arrumando';
+
 export interface UserProfile {
   uid: string;
   name: string;
@@ -13,6 +16,14 @@ export interface UserProfile {
   moodEmoji?: string;
   moodUpdatedAt?: any;
   trustedSOSContactEmail?: string;
+  mascot?: MascotType;
+  currentStatus?: StatusType;
+  favorites?: {
+    music?: string;
+    game?: string;
+    color?: string;
+    food?: string;
+  };
 }
 
 export interface Contact {
@@ -30,6 +41,14 @@ export interface Contact {
   hasUnread?: boolean;
   mood?: string;
   moodEmoji?: string;
+  mascot?: MascotType;
+  currentStatus?: StatusType;
+  favorites?: {
+    music?: string;
+    game?: string;
+    color?: string;
+    food?: string;
+  };
 }
 
 export interface Message {

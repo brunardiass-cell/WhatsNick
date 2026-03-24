@@ -3,12 +3,14 @@ import {
   auth, db, googleProvider, signInWithPopup, signOut, onAuthStateChanged,
   collection, doc, setDoc, getDoc, getDocs, query, where, onSnapshot, addDoc, orderBy, serverTimestamp, deleteDoc, updateDoc, deleteField
 } from './firebase';
-import { UserProfile, Contact, Message, PendingInvite, UserRole } from './types';
+import { UserProfile, Contact, Message, PendingInvite, UserRole, MascotType, StatusType } from './types';
 import { cn } from './utils';
 import { 
   MessageCircle, Shield, Phone, Camera, Send, AlertTriangle, 
   UserPlus, Check, X, LogOut, Settings, User, MapPin, Clock,
-  ChevronLeft, Image as ImageIcon, Smile, Trash2, Video, Users, Bell
+  ChevronLeft, Image as ImageIcon, Smile, Trash2, Video, Users, Bell,
+  Star, Cat, Dog, Gamepad2, Music, Palette, Utensils, Activity, Heart,
+  Gamepad, Coffee, Book, Home, MessageSquare, Briefcase
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { format, isValid } from 'date-fns';
@@ -343,6 +345,78 @@ export default function App() {
     }
   };
 
+  const updateStatus = async (status: string) => {
+    if (!user || isUpdating) return;
+    setIsUpdating(true);
+    try {
+      await setDoc(doc(db, 'users_v3', user.uid), { 
+        currentStatus: status 
+      }, { merge: true });
+      
+      // Update this user's status in everyone's contact list who has them (background)
+      const contactsSnap = await getDocs(collection(db, 'users_v3', user.uid, 'contacts'));
+      const updatePromises = contactsSnap.docs.map(async (contactDoc) => {
+        const contactId = contactDoc.id;
+        return setDoc(doc(db, 'users_v3', contactId, 'contacts', user.uid), {
+          currentStatus: status
+        }, { merge: true }).catch(() => {});
+      });
+      await Promise.all(updatePromises);
+    } catch (error) {
+      handleFirestoreError(error, OperationType.WRITE, `users_v3/${user.uid}`);
+    } finally {
+      setIsUpdating(false);
+    }
+  };
+
+  const updateMascot = async (mascot: string) => {
+    if (!user || isUpdating) return;
+    setIsUpdating(true);
+    try {
+      await setDoc(doc(db, 'users_v3', user.uid), { 
+        mascot: mascot 
+      }, { merge: true });
+      
+      // Update this user's mascot in everyone's contact list who has them (background)
+      const contactsSnap = await getDocs(collection(db, 'users_v3', user.uid, 'contacts'));
+      const updatePromises = contactsSnap.docs.map(async (contactDoc) => {
+        const contactId = contactDoc.id;
+        return setDoc(doc(db, 'users_v3', contactId, 'contacts', user.uid), {
+          mascot: mascot
+        }, { merge: true }).catch(() => {});
+      });
+      await Promise.all(updatePromises);
+    } catch (error) {
+      handleFirestoreError(error, OperationType.WRITE, `users_v3/${user.uid}`);
+    } finally {
+      setIsUpdating(false);
+    }
+  };
+
+  const updateFavorites = async (favorites: any) => {
+    if (!user || isUpdating) return;
+    setIsUpdating(true);
+    try {
+      await setDoc(doc(db, 'users_v3', user.uid), { 
+        favorites: favorites 
+      }, { merge: true });
+      
+      // Update this user's favorites in everyone's contact list who has them (background)
+      const contactsSnap = await getDocs(collection(db, 'users_v3', user.uid, 'contacts'));
+      const updatePromises = contactsSnap.docs.map(async (contactDoc) => {
+        const contactId = contactDoc.id;
+        return setDoc(doc(db, 'users_v3', contactId, 'contacts', user.uid), {
+          favorites: favorites
+        }, { merge: true }).catch(() => {});
+      });
+      await Promise.all(updatePromises);
+    } catch (error) {
+      handleFirestoreError(error, OperationType.WRITE, `users_v3/${user.uid}`);
+    } finally {
+      setIsUpdating(false);
+    }
+  };
+
   const handleLogin = async () => {
     if (isLoggingIn) return;
     setIsLoggingIn(true);
@@ -643,6 +717,9 @@ export default function App() {
                 contacts={contacts}
                 onSOS={handleSOS}
                 updateTrustedSOSContact={updateTrustedSOSContact}
+                updateStatus={updateStatus}
+                updateMascot={updateMascot}
+                updateFavorites={updateFavorites}
               />
             </div>
             <div className={cn(
@@ -753,7 +830,7 @@ export default function App() {
   );
 }
 
-function MainLayout({ user, activeTab, setActiveTab, setView, setActiveChat, setModal, moods, avatars, updateMood, updateProfilePhoto, pendingInvites, acceptInvite, declineInvite, setShowAddFriendModal, onClearContacts, isUpdating, isAdding, setIsAdding, isProcessingInvite, contacts, onSOS, updateTrustedSOSContact }: any) {
+function MainLayout({ user, activeTab, setActiveTab, setView, setActiveChat, setModal, moods, avatars, updateMood, updateProfilePhoto, pendingInvites, acceptInvite, declineInvite, setShowAddFriendModal, onClearContacts, isUpdating, isAdding, setIsAdding, isProcessingInvite, contacts, onSOS, updateTrustedSOSContact, updateStatus, updateMascot, updateFavorites }: any) {
   return (
     <div className="flex flex-col md:flex-row h-full bg-white w-full">
       {/* Sidebar Navigation (Desktop) / Bottom Navigation (Mobile) */}
@@ -773,6 +850,12 @@ function MainLayout({ user, activeTab, setActiveTab, setView, setActiveChat, set
             onClick={() => setActiveTab('calls')} 
             icon={<Phone className="w-6 h-6" />} 
             label="Ligações" 
+          />
+          <NavButton 
+            active={activeTab === 'status'} 
+            onClick={() => setActiveTab('status')} 
+            icon={<Activity className="w-6 h-6" />} 
+            label="Status" 
           />
           <NavButton 
             active={activeTab === 'family'} 
@@ -827,6 +910,14 @@ function MainLayout({ user, activeTab, setActiveTab, setView, setActiveChat, set
                 />
           )}
           {activeTab === 'calls' && <CallsView user={user} setActiveChat={setActiveChat} setView={setView} setModal={setModal} />}
+          {activeTab === 'status' && (
+            <StatusView 
+              user={user} 
+              setModal={setModal} 
+              isUpdating={isUpdating} 
+              updateStatus={updateStatus} 
+            />
+          )}
           {activeTab === 'family' && <FamilyView user={user} setModal={setModal} setView={setView} setActiveChat={setActiveChat} isAdding={isAdding} setIsAdding={setIsAdding} />}
           {activeTab === 'settings' && (
             <SettingsView 
@@ -840,6 +931,8 @@ function MainLayout({ user, activeTab, setActiveTab, setView, setActiveChat, set
               onClearContacts={onClearContacts}
               isUpdating={isUpdating}
               updateTrustedSOSContact={updateTrustedSOSContact}
+              updateMascot={updateMascot}
+              updateFavorites={updateFavorites}
             />
           )}
         </div>
@@ -1851,10 +1944,11 @@ function FamilyView({ user, setModal, setView, setActiveChat, isAdding, setIsAdd
   );
 }
 
-function SettingsView({ user, onLogout, setModal, moods, avatars, updateMood, updateProfilePhoto, onClearContacts, isUpdating, updateTrustedSOSContact }: { user: UserProfile, onLogout: () => void, setModal: (m: any) => void, moods: any[], avatars: string[], updateMood: (m: string, e: string) => void, updateProfilePhoto: (url: string) => Promise<void>, onClearContacts: () => void, isUpdating: boolean, updateTrustedSOSContact: (email: string) => Promise<void> }) {
+function SettingsView({ user, onLogout, setModal, moods, avatars, updateMood, updateProfilePhoto, onClearContacts, isUpdating, updateTrustedSOSContact, updateMascot, updateFavorites }: { user: UserProfile, onLogout: () => void, setModal: (m: any) => void, moods: any[], avatars: string[], updateMood: (m: string, e: string) => void, updateProfilePhoto: (url: string) => Promise<void>, onClearContacts: () => void, isUpdating: boolean, updateTrustedSOSContact: (email: string) => Promise<void>, updateMascot: (m: string) => Promise<void>, updateFavorites: (f: any) => Promise<void> }) {
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [uploading, setUploading] = useState(false);
   const [sosEmail, setSosEmail] = useState(user.trustedSOSContactEmail || '');
+  const [favs, setFavs] = useState(user.favorites || { music: '', game: '', color: '', food: '' });
 
   const handlePhotoUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
@@ -1892,7 +1986,7 @@ function SettingsView({ user, onLogout, setModal, moods, avatars, updateMood, up
       </header>
 
       <div className="flex-1 overflow-y-auto p-6 space-y-8">
-        <section className="bg-white p-6 rounded-3xl shadow-sm border border-slate-100 flex flex-col items-center">
+        <section className="bg-white p-6 rounded-[32px] shadow-sm border border-slate-100 flex flex-col items-center">
           <div className="relative mb-4">
             <div className="w-32 h-32 rounded-full overflow-hidden border-4 border-[#81D4FA]/20 relative">
               {uploading && (
@@ -1918,6 +2012,95 @@ function SettingsView({ user, onLogout, setModal, moods, avatars, updateMood, up
           <p className="text-slate-500 text-sm mb-4">{user.email}</p>
           <div className="px-4 py-1 bg-[#81D4FA]/10 text-[#81D4FA] rounded-full text-xs font-bold uppercase tracking-wider">
             {user.role === 'parent' ? 'Responsável' : 'Criança'}
+          </div>
+        </section>
+
+        <section className="space-y-4">
+          <h4 className="font-bold text-slate-800 flex items-center gap-2">
+            <Heart className="w-5 h-5 text-[#F48FB1]" />
+            Escolha seu Mascote
+          </h4>
+          <div className="grid grid-cols-3 gap-3">
+            {MASCOT_OPTIONS.map((m) => (
+              <button
+                key={m.type}
+                disabled={isUpdating}
+                onClick={() => updateMascot(m.type)}
+                className={cn(
+                  "flex flex-col items-center gap-2 p-4 rounded-2xl border transition-all",
+                  user.mascot === m.type ? "bg-[#F48FB1]/10 border-[#F48FB1] shadow-sm" : "bg-white border-slate-100 hover:border-[#F48FB1]/30"
+                )}
+              >
+                <span className="text-4xl">{m.emoji}</span>
+                <span className="text-xs font-bold text-slate-600">{m.label}</span>
+              </button>
+            ))}
+          </div>
+        </section>
+
+        <section className="space-y-4">
+          <h4 className="font-bold text-slate-800 flex items-center gap-2">
+            <Star className="w-5 h-5 text-yellow-500" />
+            Mural de Favoritos
+          </h4>
+          <div className="bg-white p-6 rounded-[32px] border border-slate-100 space-y-4 shadow-sm">
+            <div className="space-y-3">
+              <div className="flex items-center gap-3">
+                <div className="w-10 h-10 bg-purple-100 text-purple-600 rounded-xl flex items-center justify-center shrink-0">
+                  <Music className="w-5 h-5" />
+                </div>
+                <input 
+                  type="text" 
+                  value={favs.music}
+                  onChange={(e) => setFavs({...favs, music: e.target.value})}
+                  placeholder="Música favorita"
+                  className="flex-1 bg-slate-50 p-3 rounded-xl outline-none text-sm border-2 border-transparent focus:border-purple-300"
+                />
+              </div>
+              <div className="flex items-center gap-3">
+                <div className="w-10 h-10 bg-blue-100 text-blue-600 rounded-xl flex items-center justify-center shrink-0">
+                  <Gamepad className="w-5 h-5" />
+                </div>
+                <input 
+                  type="text" 
+                  value={favs.game}
+                  onChange={(e) => setFavs({...favs, game: e.target.value})}
+                  placeholder="Jogo favorito"
+                  className="flex-1 bg-slate-50 p-3 rounded-xl outline-none text-sm border-2 border-transparent focus:border-blue-300"
+                />
+              </div>
+              <div className="flex items-center gap-3">
+                <div className="w-10 h-10 bg-pink-100 text-pink-600 rounded-xl flex items-center justify-center shrink-0">
+                  <Palette className="w-5 h-5" />
+                </div>
+                <input 
+                  type="text" 
+                  value={favs.color}
+                  onChange={(e) => setFavs({...favs, color: e.target.value})}
+                  placeholder="Cor favorita"
+                  className="flex-1 bg-slate-50 p-3 rounded-xl outline-none text-sm border-2 border-transparent focus:border-pink-300"
+                />
+              </div>
+              <div className="flex items-center gap-3">
+                <div className="w-10 h-10 bg-orange-100 text-orange-600 rounded-xl flex items-center justify-center shrink-0">
+                  <Utensils className="w-5 h-5" />
+                </div>
+                <input 
+                  type="text" 
+                  value={favs.food}
+                  onChange={(e) => setFavs({...favs, food: e.target.value})}
+                  placeholder="Comida favorita"
+                  className="flex-1 bg-slate-50 p-3 rounded-xl outline-none text-sm border-2 border-transparent focus:border-orange-300"
+                />
+              </div>
+            </div>
+            <button 
+              disabled={isUpdating}
+              onClick={() => updateFavorites(favs)}
+              className="w-full py-3 bg-[#CE93D8] text-white rounded-xl font-bold shadow-md hover:bg-[#BA68C8] transition-colors disabled:opacity-50"
+            >
+              Salvar Mural
+            </button>
           </div>
         </section>
 
@@ -2012,11 +2195,80 @@ function SettingsView({ user, onLogout, setModal, moods, avatars, updateMood, up
   );
 }
 
+const STATUS_OPTIONS: { label: StatusType, icon: any, color: string, description: string }[] = [
+  { label: 'brincando', icon: <Gamepad2 className="w-5 h-5" />, color: '#F48FB1', description: 'Estou me divertindo!' },
+  { label: 'estudando', icon: <Book className="w-5 h-5" />, color: '#81D4FA', description: 'Focado nos livros.' },
+  { label: 'dormindo', icon: <Clock className="w-5 h-5" />, color: '#CE93D8', description: 'Zzz... Sonhando.' },
+  { label: 'conversando', icon: <MessageSquare className="w-5 h-5" />, color: '#81D4FA', description: 'Batendo um papo.' },
+  { label: 'trabalhando', icon: <Briefcase className="w-5 h-5" />, color: '#F48FB1', description: 'Em reunião ou tarefa.' },
+  { label: 'comendo', icon: <Utensils className="w-5 h-5" />, color: '#CE93D8', description: 'Hora do lanche!' },
+  { label: 'arrumando', icon: <Home className="w-5 h-5" />, color: '#81D4FA', description: 'Organizando tudo.' },
+];
+
+const MASCOT_OPTIONS: { type: MascotType, emoji: string, label: string }[] = [
+  { type: 'cat', emoji: '🐱', label: 'Gatinho' },
+  { type: 'bear', emoji: '🐻', label: 'Ursinho' },
+  { type: 'dog', emoji: '🐶', label: 'Cachorrinho' },
+];
+
+function StatusView({ user, setModal, isUpdating, updateStatus }: { user: UserProfile, setModal: (m: any) => void, isUpdating: boolean, updateStatus: (s: string) => void }) {
+  return (
+    <div className="flex flex-col h-full bg-slate-50">
+      <header className="p-6 bg-[#81D4FA] text-white shrink-0 shadow-md">
+        <h2 className="text-2xl font-bold">Meu Status</h2>
+        <p className="text-white/80 text-sm">O que você está fazendo agora?</p>
+      </header>
+
+      <div className="flex-1 overflow-y-auto p-6 space-y-6">
+        <div className="bg-white p-6 rounded-[32px] shadow-sm border border-slate-100 flex flex-col items-center text-center">
+          <div className="w-24 h-24 bg-slate-50 rounded-full flex items-center justify-center text-5xl mb-4 shadow-inner">
+            {user.mascot === 'cat' ? '🐱' : user.mascot === 'bear' ? '🐻' : user.mascot === 'dog' ? '🐶' : '👤'}
+          </div>
+          <h3 className="text-xl font-bold text-slate-800">
+            {user.currentStatus ? `Estou ${user.currentStatus}!` : 'Como você está?'}
+          </h3>
+          <p className="text-slate-500 text-sm">Seus amigos verão seu mascote fazendo isso!</p>
+        </div>
+
+        <div className="grid grid-cols-1 gap-3">
+          {STATUS_OPTIONS.map((opt) => (
+            <button
+              key={opt.label}
+              disabled={isUpdating}
+              onClick={() => updateStatus(opt.label)}
+              className={cn(
+                "flex items-center gap-4 p-4 rounded-2xl border transition-all text-left",
+                user.currentStatus === opt.label 
+                  ? "bg-white border-2 border-[#81D4FA] shadow-md" 
+                  : "bg-white border-slate-100 hover:border-[#81D4FA]/30"
+              )}
+            >
+              <div className="p-3 rounded-xl" style={{ backgroundColor: `${opt.color}20`, color: opt.color }}>
+                {opt.icon}
+              </div>
+              <div className="flex-1">
+                <p className="font-bold text-slate-800 capitalize">{opt.label}</p>
+                <p className="text-xs text-slate-500">{opt.description}</p>
+              </div>
+              {user.currentStatus === opt.label && (
+                <div className="w-6 h-6 bg-[#81D4FA] text-white rounded-full flex items-center justify-center">
+                  <Check className="w-4 h-4" />
+                </div>
+              )}
+            </button>
+          ))}
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function ChatView({ user, contact, onBack, setModal }: { user: UserProfile, contact: Contact, onBack: () => void, setModal: (m: any) => void }) {
   const [messages, setMessages] = useState<Message[]>([]);
   const [inputText, setInputText] = useState('');
   const [showEmoji, setShowEmoji] = useState(false);
   const [isSending, setIsSending] = useState(false);
+  const [showMural, setShowMural] = useState(false);
   const scrollRef = useRef<HTMLDivElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
@@ -2065,50 +2317,31 @@ function ChatView({ user, contact, onBack, setModal }: { user: UserProfile, cont
     return () => unsubscribe();
   }, [chatId, user.uid, contactUid]);
 
-  const sendMessage = async () => {
-    if (!inputText.trim() || isSending) return;
-    if (!auth.currentUser) {
-      console.error("User not authenticated");
-      return;
-    }
-    const text = inputText;
+  const sendMessage = async (mediaUrl?: string, mediaType: 'text' | 'image' | 'call' = 'text', meetUrl?: string) => {
+    if ((!inputText.trim() && !mediaUrl) || isSending || !contactUid) return;
+    setIsSending(true);
+    const text = inputText.trim();
     setInputText('');
     setShowEmoji(false);
-    setIsSending(true);
+
     try {
-      const messageData = {
+      await addDoc(collection(db, 'chats_v3', chatId, 'messages'), {
         senderId: user.uid,
         receiverId: contactUid,
-        text,
-        mediaType: 'text',
+        text: mediaType === 'text' ? text : '',
+        mediaUrl: mediaUrl || '',
+        mediaType,
+        meetUrl: meetUrl || '',
         timestamp: serverTimestamp()
-      };
-      
-      // Add message
-      try {
-        await addDoc(collection(db, 'chats_v3', chatId, 'messages'), messageData);
-      } catch (error) {
-        console.error("Error in addDoc:", error);
-        throw error;
-      }
-      
-      // Update lastMessageAt and hasUnread for receiver
-      await setDoc(doc(db, 'users_v3', contactUid, 'contacts', user.uid), {
-        uid: user.uid,
-        name: user.name,
-        photoURL: user.photoURL || '',
-        lastMessageAt: serverTimestamp(),
-        hasUnread: true,
-        lastMessageText: text
-      }, { merge: true });
+      });
 
-      // Update lastMessageAt for sender
-      await setDoc(doc(db, 'users_v3', user.uid, 'contacts', contactUid), {
-        uid: contactUid,
+      const lastMsgUpdate = {
         lastMessageAt: serverTimestamp(),
-        hasUnread: false,
-        lastMessageText: text
-      }, { merge: true });
+        lastMessageText: mediaType === 'text' ? text : (mediaType === 'image' ? '📷 Foto' : '📞 Chamada'),
+      };
+
+      await setDoc(doc(db, 'users_v3', user.uid, 'contacts', contactUid), lastMsgUpdate, { merge: true });
+      await setDoc(doc(db, 'users_v3', contactUid, 'contacts', user.uid), { ...lastMsgUpdate, hasUnread: true }, { merge: true });
 
     } catch (error) {
       handleFirestoreError(error, OperationType.WRITE, `chats_v3/${chatId}/messages`);
@@ -2117,115 +2350,34 @@ function ChatView({ user, contact, onBack, setModal }: { user: UserProfile, cont
     }
   };
 
+  const startCall = () => {
+    const meetId = Math.random().toString(36).substring(7);
+    const meetUrl = `https://meet.jit.si/${meetId}`;
+    sendMessage(undefined, 'call', meetUrl);
+    window.open(meetUrl, '_blank');
+  };
+
   const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
 
-    const compressImage = (dataUrl: string): Promise<string> => {
-      return new Promise((resolve) => {
-        const img = new Image();
-        img.onload = () => {
-          const canvas = document.createElement('canvas');
-          let width = img.width;
-          let height = img.height;
-          
-          // Max dimension to keep it under 1MB base64
-          const MAX_DIM = 1000;
-          if (width > height) {
-            if (width > MAX_DIM) {
-              height *= MAX_DIM / width;
-              width = MAX_DIM;
-            }
-          } else {
-            if (height > MAX_DIM) {
-              width *= MAX_DIM / height;
-              height = MAX_DIM;
-            }
-          }
-          
-          canvas.width = width;
-          canvas.height = height;
-          const ctx = canvas.getContext('2d');
-          ctx?.drawImage(img, 0, 0, width, height);
-          
-          // Start with high quality and reduce if still too large
-          let quality = 0.7;
-          let result = canvas.toDataURL('image/jpeg', quality);
-          
-          // Firestore limit is 1MB. Base64 is ~33% larger than binary.
-          // So we want the string to be < 1,000,000 chars.
-          while (result.length > 1000000 && quality > 0.1) {
-            quality -= 0.1;
-            result = canvas.toDataURL('image/jpeg', quality);
-          }
-          resolve(result);
-        };
-        img.src = dataUrl;
-      });
-    };
-
     const reader = new FileReader();
     reader.onload = async (event) => {
-      const rawBase64 = event.target?.result as string;
-      const compressedBase64 = await compressImage(rawBase64);
-      
-      try {
-        await addDoc(collection(db, 'chats_v3', chatId, 'messages'), {
-          senderId: user.uid,
-          receiverId: contactUid,
-          mediaUrl: compressedBase64,
-          mediaType: 'image',
-          timestamp: serverTimestamp()
-        });
-      } catch (error) {
-        console.error("Error in addDoc (file upload):", error);
-        handleFirestoreError(error, OperationType.WRITE, `chats_v3/${chatId}/messages`);
-      }
+      const base64 = event.target?.result as string;
+      sendMessage(base64, 'image');
     };
     reader.readAsDataURL(file);
   };
+
+  const mascotEmoji = contact.mascot === 'cat' ? '🐱' : contact.mascot === 'bear' ? '🐻' : contact.mascot === 'dog' ? '🐶' : null;
+  const statusInfo = STATUS_OPTIONS.find(s => s.label === contact.currentStatus);
 
   const onEmojiClick = (emojiData: EmojiClickData) => {
     setInputText(prev => prev + emojiData.emoji);
   };
 
-  const startVideoCall = async () => {
-    const meetUrl = 'https://meet.google.com/dkh-wqzr-ymg';
-    window.open(meetUrl, '_blank');
-    
-    try {
-      await addDoc(collection(db, 'chats_v3', chatId, 'messages'), {
-        senderId: user.uid,
-        receiverId: contactUid,
-        mediaType: 'call',
-        meetUrl: meetUrl,
-        text: 'iniciar chamada',
-        timestamp: serverTimestamp()
-      });
-
-      // Update lastMessageAt and hasUnread for receiver
-      await setDoc(doc(db, 'users_v3', contactUid, 'contacts', user.uid), {
-        lastMessageAt: serverTimestamp(),
-        lastMessageText: 'iniciar chamada',
-        hasUnread: true,
-      }, { merge: true });
-
-      // Update for sender
-      await setDoc(doc(db, 'users_v3', user.uid, 'contacts', contactUid), {
-        lastMessageAt: serverTimestamp(),
-        lastMessageText: 'iniciar chamada',
-        hasUnread: false,
-      }, { merge: true });
-
-    } catch (error) {
-      console.error("Error in addDoc (video call):", error);
-      handleFirestoreError(error, OperationType.WRITE, `chats_v3/${chatId}/messages`);
-    }
-  };
-
   const callAttention = async () => {
     try {
-      // Send a message to the chat
       await addDoc(collection(db, 'chats_v3', chatId, 'messages'), {
         senderId: user.uid,
         receiverId: contactUid,
@@ -2233,21 +2385,14 @@ function ChatView({ user, contact, onBack, setModal }: { user: UserProfile, cont
         timestamp: serverTimestamp()
       });
 
-      // Update lastMessageAt and hasUnread for receiver
-      await setDoc(doc(db, 'users_v3', contactUid, 'contacts', user.uid), {
+      const lastMsgUpdate = {
         lastMessageAt: serverTimestamp(),
         lastMessageText: '🔔 Chamou sua atenção!',
-        hasUnread: true,
-      }, { merge: true });
+      };
 
-      // Update for sender
-      await setDoc(doc(db, 'users_v3', user.uid, 'contacts', contactUid), {
-        lastMessageAt: serverTimestamp(),
-        lastMessageText: '🔔 Chamou sua atenção!',
-        hasUnread: false,
-      }, { merge: true });
+      await setDoc(doc(db, 'users_v3', user.uid, 'contacts', contactUid), lastMsgUpdate, { merge: true });
+      await setDoc(doc(db, 'users_v3', contactUid, 'contacts', user.uid), { ...lastMsgUpdate, hasUnread: true }, { merge: true });
 
-      // Send email via our API
       const response = await fetch('/api/attention/email', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -2289,7 +2434,6 @@ function ChatView({ user, contact, onBack, setModal }: { user: UserProfile, cont
           const deletePromises = snapshot.docs.map(d => deleteDoc(doc(db, 'chats_v3', chatId, 'messages', d.id)));
           await Promise.all(deletePromises);
           
-          // Update last message in contacts
           await setDoc(doc(db, 'users_v3', user.uid, 'contacts', contactUid), {
             lastMessageText: '',
             hasUnread: false
@@ -2310,14 +2454,6 @@ function ChatView({ user, contact, onBack, setModal }: { user: UserProfile, cont
   const isMeetAllowed = contact.meetAuthorized || user.role === 'parent';
   const isClearAllowed = contact.canClearChat || user.role === 'parent';
 
-  if (!user || !contact) {
-    return (
-      <div className="flex items-center justify-center h-full bg-white">
-        <p className="text-slate-500">Carregando conversa...</p>
-      </div>
-    );
-  }
-
   return (
     <motion.div 
       initial={{ x: 300, opacity: 0 }} animate={{ x: 0, opacity: 1 }} exit={{ x: 300, opacity: 0 }}
@@ -2328,12 +2464,30 @@ function ChatView({ user, contact, onBack, setModal }: { user: UserProfile, cont
           <ChevronLeft className="w-8 h-8" />
           <span className="font-bold text-sm">Sair</span>
         </button>
-        <img src={contact.photoURL || `https://api.dicebear.com/7.x/avataaars/svg?seed=${contact.id}`} className="w-10 h-10 rounded-full border-2 border-white/20" alt="" />
+        <div className="relative">
+          <img src={contact.photoURL || `https://api.dicebear.com/7.x/avataaars/svg?seed=${contact.uid}`} className="w-10 h-10 rounded-full border-2 border-white/20" alt="" />
+          {mascotEmoji && (
+            <div className="absolute -bottom-1 -right-1 w-5 h-5 bg-white rounded-full flex items-center justify-center text-xs shadow-sm border border-slate-100">
+              {mascotEmoji}
+            </div>
+          )}
+        </div>
         <div className="flex-1 min-w-0">
           <h3 className="font-bold truncate">{contact.name}</h3>
-          <p className="text-[10px] text-[#F48FB1] font-bold uppercase tracking-wider">Online</p>
+          <p className="text-[10px] text-[#F48FB1] font-bold uppercase tracking-wider">
+            {contact.currentStatus ? `Está ${contact.currentStatus}` : 'Online'}
+          </p>
         </div>
         <div className="flex gap-2">
+          <button 
+            onClick={() => setShowMural(!showMural)}
+            className={cn(
+              "p-2 rounded-2xl transition-all",
+              showMural ? "bg-white text-yellow-600" : "bg-white/10 text-white hover:bg-white/20"
+            )}
+          >
+            <Star className={cn("w-6 h-6", showMural && "fill-current")} />
+          </button>
           <button 
             onClick={callAttention}
             className="p-3 bg-white/10 text-white rounded-2xl hover:bg-white/20 transition-colors"
@@ -2341,7 +2495,7 @@ function ChatView({ user, contact, onBack, setModal }: { user: UserProfile, cont
           >
             <Bell className="w-6 h-6" />
           </button>
-          {isClearAllowed ? (
+          {isClearAllowed && (
             <button 
               onClick={clearChat}
               className="p-3 bg-white/10 text-white rounded-2xl hover:bg-white/20 transition-colors"
@@ -2349,30 +2503,71 @@ function ChatView({ user, contact, onBack, setModal }: { user: UserProfile, cont
             >
               <Trash2 className="w-6 h-6" />
             </button>
-          ) : (
-            <button 
-              onClick={() => setModal({
-                title: 'Ação Restrita',
-                message: 'Você não tem permissão para limpar esta conversa. Peça ao seu responsável para autorizar.',
-                type: 'alert'
-              })}
-              className="p-3 bg-white/5 text-white/30 rounded-2xl cursor-not-allowed"
-              title="Limpar Conversa (Bloqueado)"
-            >
-              <Trash2 className="w-6 h-6" />
-            </button>
           )}
-          {isMeetAllowed ? (
-            <button className="p-3 bg-white/10 text-white rounded-2xl hover:bg-white/20 transition-colors" onClick={startVideoCall}>
+          {isMeetAllowed && (
+            <button className="p-3 bg-white/10 text-white rounded-2xl hover:bg-white/20 transition-colors" onClick={startCall}>
               <Video className="w-6 h-6" />
             </button>
-          ) : (
-            <div className="p-3 bg-white/5 text-white/30 rounded-2xl cursor-not-allowed">
-              <Video className="w-6 h-6" />
-            </div>
           )}
         </div>
       </header>
+
+      <AnimatePresence>
+        {showMural && (
+          <motion.div 
+            initial={{ height: 0, opacity: 0 }}
+            animate={{ height: 'auto', opacity: 1 }}
+            exit={{ height: 0, opacity: 0 }}
+            className="bg-white border-b border-slate-100 overflow-hidden shadow-inner"
+          >
+            <div className="p-4 grid grid-cols-2 gap-3">
+              <div className="bg-purple-50 p-3 rounded-2xl flex items-center gap-3">
+                <Music className="w-5 h-5 text-purple-500" />
+                <div className="overflow-hidden">
+                  <p className="text-[10px] text-purple-400 font-bold uppercase">Música</p>
+                  <p className="text-sm font-bold text-slate-700 truncate">{contact.favorites?.music || '---'}</p>
+                </div>
+              </div>
+              <div className="bg-blue-50 p-3 rounded-2xl flex items-center gap-3">
+                <Gamepad className="w-5 h-5 text-blue-500" />
+                <div className="overflow-hidden">
+                  <p className="text-[10px] text-blue-400 font-bold uppercase">Jogo</p>
+                  <p className="text-sm font-bold text-slate-700 truncate">{contact.favorites?.game || '---'}</p>
+                </div>
+              </div>
+              <div className="bg-pink-50 p-3 rounded-2xl flex items-center gap-3">
+                <Palette className="w-5 h-5 text-pink-500" />
+                <div className="overflow-hidden">
+                  <p className="text-[10px] text-pink-400 font-bold uppercase">Cor</p>
+                  <p className="text-sm font-bold text-slate-700 truncate">{contact.favorites?.color || '---'}</p>
+                </div>
+              </div>
+              <div className="bg-orange-50 p-3 rounded-2xl flex items-center gap-3">
+                <Utensils className="w-5 h-5 text-orange-500" />
+                <div className="overflow-hidden">
+                  <p className="text-[10px] text-orange-400 font-bold uppercase">Comida</p>
+                  <p className="text-sm font-bold text-slate-700 truncate">{contact.favorites?.food || '---'}</p>
+                </div>
+              </div>
+            </div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+
+      {/* Mascot Status Overlay */}
+      {mascotEmoji && contact.currentStatus && (
+        <div className="bg-[#81D4FA]/10 p-3 flex items-center justify-center gap-3 border-b border-[#81D4FA]/20">
+          <div className="text-3xl animate-bounce">
+            {mascotEmoji}
+          </div>
+          <div className="bg-white px-4 py-1.5 rounded-full shadow-sm border border-slate-100">
+            <p className="text-xs font-bold text-slate-700 flex items-center gap-2">
+              {statusInfo?.icon}
+              {contact.name} está {contact.currentStatus}!
+            </p>
+          </div>
+        </div>
+      )}
 
       <div className="flex-1 p-4 overflow-y-auto flex flex-col gap-3 bg-slate-50 relative">
         {messages.map((msg, index) => {
@@ -2403,7 +2598,7 @@ function ChatView({ user, contact, onBack, setModal }: { user: UserProfile, cont
                   <div className="flex flex-col gap-3">
                     <div className={cn("flex items-center gap-3", msg.senderId === user.uid ? "text-white/80" : "text-slate-600")}>
                       <Video className="w-5 h-5" />
-                      <span className="text-sm font-medium">{msg.text}</span>
+                      <span className="text-sm font-medium">Chamada de vídeo</span>
                     </div>
                     <button 
                       onClick={() => window.open(msg.meetUrl, '_blank')}
@@ -2498,7 +2693,7 @@ function ChatView({ user, contact, onBack, setModal }: { user: UserProfile, cont
             </button>
           </div>
           <button 
-            onClick={sendMessage} 
+            onClick={() => sendMessage()} 
             disabled={isSending || !inputText.trim()}
             className="p-3 bg-[#CE93D8] text-white rounded-full shadow-md disabled:opacity-50 flex items-center justify-center min-w-[44px] min-h-[44px]"
           >
