@@ -863,12 +863,6 @@ function MainLayout({ user, activeTab, setActiveTab, setView, setActiveChat, set
             icon={<Users className="w-6 h-6" />} 
             label="Família" 
           />
-          <NavButton 
-            active={false} 
-            onClick={onSOS} 
-            icon={<AlertTriangle className="w-6 h-6 text-red-500" />} 
-            label="SOS" 
-          />
           <div className="md:mt-auto">
             <NavButton 
               active={activeTab === 'settings'} 
@@ -909,7 +903,7 @@ function MainLayout({ user, activeTab, setActiveTab, setView, setActiveChat, set
                   contacts={contacts}
                 />
           )}
-          {activeTab === 'calls' && <CallsView user={user} setActiveChat={setActiveChat} setView={setView} setModal={setModal} />}
+          {activeTab === 'calls' && <CallsView user={user} setActiveChat={setActiveChat} setView={setView} setModal={setModal} onSOS={onSOS} />}
           {activeTab === 'status' && (
             <StatusView 
               user={user} 
@@ -1327,7 +1321,7 @@ function ChildDashboard({ user, setView, setActiveChat, setModal, pendingInvites
   );
 }
 
-function CallsView({ user, setActiveChat, setView, setModal }: { user: UserProfile, setActiveChat: (c: any) => void, setView: (v: any) => void, setModal: (m: any) => void }) {
+function CallsView({ user, setActiveChat, setView, setModal, onSOS }: { user: UserProfile, setActiveChat: (c: any) => void, setView: (v: any) => void, setModal: (m: any) => void, onSOS: () => void }) {
   const [contacts, setContacts] = useState<Contact[]>([]);
 
   useEffect(() => {
@@ -1356,12 +1350,19 @@ function CallsView({ user, setActiveChat, setView, setModal }: { user: UserProfi
     <div className="flex flex-col flex-1 bg-white">
       <header className="p-6 border-b bg-[#F48FB1] text-white">
         <h1 className="text-2xl font-bold">Ligações</h1>
-        <div className="mt-4">
+        <div className="mt-4 flex gap-2">
           <button 
             onClick={copyLink}
             className="bg-white/20 hover:bg-white/30 text-white px-4 py-2 rounded-xl text-sm font-bold transition-colors flex items-center gap-2"
           >
             Ver o link
+          </button>
+          <button 
+            onClick={onSOS}
+            className="bg-red-500 hover:bg-red-600 text-white px-4 py-2 rounded-xl text-sm font-bold transition-colors flex items-center gap-2 shadow-lg"
+          >
+            <AlertTriangle className="w-4 h-4" />
+            SOS
           </button>
         </div>
       </header>
