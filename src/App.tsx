@@ -1505,6 +1505,7 @@ function FamilyView({ user, setModal, setView, setActiveChat, isAdding, setIsAdd
       
       if (snapshot.empty) {
         setModal({ title: 'Ops!', message: 'Este email não está cadastrado.', type: 'alert' });
+        setIsAdding(false);
         return;
       }
 
@@ -1513,6 +1514,7 @@ function FamilyView({ user, setModal, setView, setActiveChat, isAdding, setIsAdd
       
       if (childData.role !== 'child') {
         setModal({ title: 'Aviso', message: 'Este usuário não é uma conta de criança.', type: 'alert' });
+        setIsAdding(false);
         return;
       }
 
@@ -1585,6 +1587,7 @@ function FamilyView({ user, setModal, setView, setActiveChat, isAdding, setIsAdd
       
       if (snapshot.empty) {
         setModal({ title: 'Aviso', message: 'Email não cadastrado.', type: 'alert' });
+        setIsAdding(false);
         return;
       }
 
@@ -1693,7 +1696,8 @@ function FamilyView({ user, setModal, setView, setActiveChat, isAdding, setIsAdd
   };
 
   const addFriendForChild = async () => {
-    if (!friendEmail || !selectedChild) return;
+    if (!friendEmail || !selectedChild || isAdding) return;
+    setIsAdding(true);
     try {
       const q = query(collection(db, 'users_v3'), where('email', '==', friendEmail));
       const snapshot = await getDocs(q);
@@ -1704,6 +1708,7 @@ function FamilyView({ user, setModal, setView, setActiveChat, isAdding, setIsAdd
           message: 'Este email não está cadastrado no WhatsNicky. Peça para a pessoa se cadastrar primeiro!',
           type: 'alert'
         });
+        setIsAdding(false);
         return;
       }
 
@@ -1747,6 +1752,8 @@ function FamilyView({ user, setModal, setView, setActiveChat, isAdding, setIsAdd
       });
     } catch (error) {
       handleFirestoreError(error, OperationType.WRITE, `users_v3/${selectedChild.uid}/contacts`);
+    } finally {
+      setIsAdding(false);
     }
   };
 
@@ -2321,7 +2328,10 @@ function ChatView({ user, contact, onBack, setModal }: { user: UserProfile, cont
     const q = query(collection(db, 'chats_v3', chatId, 'messages'), orderBy('timestamp', 'asc'));
     const unsubscribe = onSnapshot(q, (snapshot) => {
       try {
-        const newMessages = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as Message));
+        const newMessages = snapshot.docs.map(doc => ({ 
+          id: doc.id, 
+          ...doc.data({ serverTimestamps: 'estimate' }) 
+        } as Message));
         setMessages(newMessages);
         
         // Update last message timestamp in contacts to clear notifications
