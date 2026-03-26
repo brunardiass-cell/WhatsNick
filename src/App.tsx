@@ -307,9 +307,11 @@ export default function App() {
       });
       
       await Promise.all(updatePromises);
+      setModal({ title: 'Sucesso!', message: 'Seu humor foi atualizado!', type: 'alert' });
     } catch (error) {
       console.error("Error updating mood:", error);
-      // If it failed, we might want to show the prompt again, but for now let's just log
+      setModal({ title: 'Erro', message: 'Não foi possível atualizar seu humor. Verifique sua conexão.', type: 'alert' });
+      try { handleFirestoreError(error, OperationType.WRITE, `users_v3/${user.uid}`); } catch (e) {}
     } finally {
       setSelectedMoodLabel(null);
       setTimeout(() => setIsUpdating(false), 500); // Prevent double click
@@ -370,8 +372,11 @@ export default function App() {
         }, { merge: true }).catch(() => {});
       });
       await Promise.all(updatePromises);
+      setModal({ title: 'Sucesso!', message: 'Seu status foi atualizado!', type: 'alert' });
     } catch (error) {
-      handleFirestoreError(error, OperationType.WRITE, `users_v3/${user.uid}`);
+      console.error("Error updating status:", error);
+      setModal({ title: 'Erro', message: 'Não foi possível atualizar seu status. Verifique sua conexão.', type: 'alert' });
+      try { handleFirestoreError(error, OperationType.WRITE, `users_v3/${user.uid}`); } catch (e) {}
     } finally {
       setIsUpdating(false);
     }
@@ -2399,7 +2404,8 @@ function ChatView({ user, contact, onBack, setModal }: { user: UserProfile, cont
     } catch (error) {
       // Restore input on failure
       setInputText(currentInput);
-      handleFirestoreError(error, OperationType.WRITE, `chats_v3/${chatId}/messages`);
+      setModal({ title: 'Erro no Envio', message: 'Não foi possível enviar sua mensagem. Verifique sua conexão.', type: 'alert' });
+      try { handleFirestoreError(error, OperationType.WRITE, `chats_v3/${chatId}/messages`); } catch (e) {}
     } finally {
       setIsSending(false);
     }
