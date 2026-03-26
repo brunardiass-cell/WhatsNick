@@ -91,7 +91,7 @@ service cloud.firestore {
              (!('mood' in data) || (data.mood is string && data.mood.size() < 50)) &&
              (!('moodEmoji' in data) || (data.moodEmoji is string && data.moodEmoji.size() < 20)) &&
              (!('currentStatus' in data) || (data.currentStatus is string && data.currentStatus.size() < 50)) &&
-             (!('mascot' in data) || (data.mascot is string && data.mascot.size() < 50)) &&
+             (!('mascot' in data) || (data.mascot is string && data.mascot.size() < 20)) &&
              (!('favorites' in data) || (data.favorites is map)) &&
              (!('trustedSOSContactEmail' in data) || (data.trustedSOSContactEmail is string && data.trustedSOSContactEmail.size() < 100)) &&
              (!('moodUpdatedAt' in data) || (data.moodUpdatedAt is timestamp || data.moodUpdatedAt == null));
@@ -107,12 +107,11 @@ service cloud.firestore {
              (!('mood' in data) || (data.mood is string && data.mood.size() < 50)) &&
              (!('moodEmoji' in data) || (data.moodEmoji is string && data.moodEmoji.size() < 20)) &&
              (!('currentStatus' in data) || (data.currentStatus is string && data.currentStatus.size() < 50)) &&
-             (!('mascot' in data) || (data.mascot is string && data.mascot.size() < 50)) &&
+             (!('mascot' in data) || (data.mascot is string && data.mascot.size() < 20)) &&
              (!('favorites' in data) || (data.favorites is map)) &&
              (!('lastMessageAt' in data) || (data.lastMessageAt is timestamp || data.lastMessageAt == null)) &&
              (!('hasUnread' in data) || data.hasUnread is bool) &&
-             (!('lastMessageText' in data) || (data.lastMessageText is string && data.lastMessageText.size() < 5000)) &&
-             (!('email' in data) || (data.email is string && data.email.size() < 100));
+             (!('lastMessageText' in data) || (data.lastMessageText is string && data.lastMessageText.size() < 5000));
     }
 
     function isValidPendingContact(data) {
@@ -126,7 +125,11 @@ service cloud.firestore {
     function isValidMessage(data) {
       return hasRequiredFields(['senderId', 'receiverId', 'mediaType', 'timestamp']) &&
              data.senderId is string && data.receiverId is string &&
-             data.mediaType in ['text', 'image', 'call'];
+             data.mediaType in ['text', 'image', 'call'] &&
+             (!('text' in data) || (data.text is string && data.text.size() < 10000)) &&
+             (!('mediaUrl' in data) || (data.mediaUrl is string && data.mediaUrl.size() < 2000)) &&
+             (!('meetUrl' in data) || (data.meetUrl is string && data.meetUrl.size() < 2000)) &&
+             (data.timestamp is timestamp || data.timestamp == null);
     }
 
     function isContactSelfUpdate(contactId) {
@@ -150,8 +153,12 @@ service cloud.firestore {
 
       match /contacts/{contactId} {
         allow read: if isOwner(userId) || isParentOf(userId) || isAdmin();
-        allow create: if isAuthenticated() && isValidContact(request.resource.data) && (isOwner(userId) || isParentOf(userId) || isAdmin() || request.auth.uid == contactId);
-        allow update: if isAuthenticated() && isValidContact(request.resource.data) && (isOwner(userId) || isParentOf(userId) || isAdmin() || request.auth.uid == contactId);
+        allow create: if isAuthenticated() && 
+                      isValidContact(request.resource.data) &&
+                      (isOwner(userId) || isParentOf(userId) || isAdmin() || request.auth.uid == contactId);
+        allow update: if isAuthenticated() && 
+                      isValidContact(request.resource.data) &&
+                      (isOwner(userId) || isParentOf(userId) || isAdmin() || request.auth.uid == contactId);
         allow delete: if isOwner(userId) || isParentOf(userId) || isAdmin();
       }
     }
@@ -170,7 +177,10 @@ service cloud.firestore {
       
       match /messages/{messageId} {
         allow read: if isAuthenticated() && (chatId.split('_').hasAny([request.auth.uid]) || isAdmin());
-        allow create: if isAuthenticated() && isValidMessage(request.resource.data) && (request.resource.data.senderId == request.auth.uid);
+        allow create: if isAuthenticated() && 
+                      isValidMessage(request.resource.data) &&
+                      (request.resource.data.senderId == request.auth.uid) &&
+                      (chatId.split('_').hasAny([request.auth.uid]));
         allow delete: if isAuthenticated() && (chatId.split('_').hasAny([request.auth.uid]) || isAdmin());
       }
     }

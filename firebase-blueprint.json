@@ -13,7 +13,11 @@
         "photoURL": { "type": "string" },
         "mood": { "type": "string" },
         "moodEmoji": { "type": "string" },
-        "moodUpdatedAt": { "type": "string", "format": "date-time" }
+        "moodUpdatedAt": { "type": "string", "format": "date-time" },
+        "currentStatus": { "type": "string" },
+        "mascot": { "type": "string" },
+        "favorites": { "type": "object" },
+        "trustedSOSContactEmail": { "type": "string" }
       },
       "required": ["uid", "name", "role"]
     },
@@ -28,7 +32,13 @@
         "approved": { "type": "boolean" },
         "childId": { "type": "string" },
         "mood": { "type": "string" },
-        "moodEmoji": { "type": "string" }
+        "moodEmoji": { "type": "string" },
+        "currentStatus": { "type": "string" },
+        "mascot": { "type": "string" },
+        "favorites": { "type": "object" },
+        "lastMessageAt": { "type": "string", "format": "date-time" },
+        "lastMessageText": { "type": "string" },
+        "hasUnread": { "type": "boolean" }
       },
       "required": ["uid", "name", "approved", "childId"]
     },
@@ -41,7 +51,8 @@
         "receiverId": { "type": "string" },
         "text": { "type": "string" },
         "mediaUrl": { "type": "string" },
-        "mediaType": { "type": "string", "enum": ["text", "image"] },
+        "mediaType": { "type": "string", "enum": ["text", "image", "call"] },
+        "meetUrl": { "type": "string" },
         "timestamp": { "type": "string", "format": "date-time" }
       },
       "required": ["senderId", "receiverId", "timestamp"]
