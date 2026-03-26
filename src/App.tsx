@@ -217,6 +217,14 @@ export default function App() {
       });
       
       setContacts(contactsList);
+
+      // Update activeChat if it exists in the new contacts list to keep data fresh
+      if (activeChat) {
+        const updatedActiveChat = contactsList.find(c => c.uid === activeChat.uid);
+        if (updatedActiveChat) {
+          setActiveChat(updatedActiveChat);
+        }
+      }
       
       const unreadCount = contactsList.filter(c => c.hasUnread).length;
       if (unreadCount > 0) {
@@ -2290,19 +2298,28 @@ function ChatView({ user, contact, onBack, setModal }: { user: UserProfile, cont
   const [showEmoji, setShowEmoji] = useState(false);
   const [isSending, setIsSending] = useState(false);
   const [showMural, setShowMural] = useState(false);
+  const [contactProfile, setContactProfile] = useState<UserProfile | null>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   const contactUid = contact.uid;
-  if (!contactUid) {
-    console.error("Contact UID is missing, cannot generate chatId");
-  }
   const chatId = [user.uid, contactUid].sort().join('_');
+
+  // Listen to contact's real profile for fresh favorites and status
+  useEffect(() => {
+    if (!contactUid) return;
+    const unsub = onSnapshot(doc(db, 'users_v3', contactUid), (docSnap) => {
+      if (docSnap.exists()) {
+        setContactProfile(docSnap.data() as UserProfile);
+      }
+    });
+    return () => unsub();
+  }, [contactUid]);
 
   useEffect(() => {
     if (!chatId || !user.uid || !contactUid) return;
     const q = query(collection(db, 'chats_v3', chatId, 'messages'), orderBy('timestamp', 'asc'));
-    const unsubscribe = onSnapshot(q, { includeMetadataChanges: true }, (snapshot) => {
+    const unsubscribe = onSnapshot(q, (snapshot) => {
       try {
         const newMessages = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as Message));
         setMessages(newMessages);
@@ -2310,11 +2327,11 @@ function ChatView({ user, contact, onBack, setModal }: { user: UserProfile, cont
         // Update last message timestamp in contacts to clear notifications
         if (newMessages.length > 0) {
           const lastMsg = newMessages[newMessages.length - 1];
-          // Only clear if the last message was from the other person
-          if (lastMsg.senderId !== user.uid) {
-            setDoc(doc(db, 'users_v3', user.uid, 'contacts', contactUid), { 
+          // Only clear if the last message was from the other person and it's unread
+          if (lastMsg.senderId !== user.uid && contact.hasUnread) {
+            updateDoc(doc(db, 'users_v3', user.uid, 'contacts', contactUid), { 
               hasUnread: false 
-            }, { merge: true }).catch(e => console.error("Error clearing unread:", e));
+            }).catch(() => {});
           }
         }
 
@@ -2328,24 +2345,24 @@ function ChatView({ user, contact, onBack, setModal }: { user: UserProfile, cont
         console.error("Error processing messages snapshot:", err);
       }
     }, (error) => {
-      // Fallback if index is not ready
-      const fallbackQ = query(collection(db, 'chats_v3', chatId, 'messages'));
-      onSnapshot(fallbackQ, (s) => {
-        setMessages(s.docs.map(d => ({ id: d.id, ...d.data() } as Message)));
-      });
       handleFirestoreError(error, OperationType.LIST, `chats_v3/${chatId}/messages`);
     });
     return () => unsubscribe();
-  }, [chatId, user.uid, contactUid]);
+  }, [chatId, user.uid, contactUid, contact.hasUnread]);
 
   const sendMessage = async (mediaUrl?: string, mediaType: 'text' | 'image' | 'call' = 'text', meetUrl?: string) => {
     if ((!inputText.trim() && !mediaUrl) || isSending || !contactUid) return;
+    
     setIsSending(true);
     const text = inputText.trim();
+    const currentInput = inputText;
+    
+    // Optimistically clear input for better UX, but keep track to restore on failure
     setInputText('');
     setShowEmoji(false);
 
     try {
+      // Add message to chat
       await addDoc(collection(db, 'chats_v3', chatId, 'messages'), {
         senderId: user.uid,
         receiverId: contactUid,
@@ -2361,10 +2378,17 @@ function ChatView({ user, contact, onBack, setModal }: { user: UserProfile, cont
         lastMessageText: mediaType === 'text' ? text : (mediaType === 'image' ? '📷 Foto' : '📞 Chamada'),
       };
 
-      await setDoc(doc(db, 'users_v3', user.uid, 'contacts', contactUid), lastMsgUpdate, { merge: true });
-      await setDoc(doc(db, 'users_v3', contactUid, 'contacts', user.uid), { ...lastMsgUpdate, hasUnread: true }, { merge: true });
+      // Update contact lists - wrapped in separate try-catch to not block message sending
+      try {
+        await setDoc(doc(db, 'users_v3', user.uid, 'contacts', contactUid), lastMsgUpdate, { merge: true });
+        await setDoc(doc(db, 'users_v3', contactUid, 'contacts', user.uid), { ...lastMsgUpdate, hasUnread: true }, { merge: true });
+      } catch (e) {
+        console.warn("Failed to update contact list metadata, but message was sent:", e);
+      }
 
     } catch (error) {
+      // Restore input on failure
+      setInputText(currentInput);
       handleFirestoreError(error, OperationType.WRITE, `chats_v3/${chatId}/messages`);
     } finally {
       setIsSending(false);
@@ -2390,8 +2414,8 @@ function ChatView({ user, contact, onBack, setModal }: { user: UserProfile, cont
     reader.readAsDataURL(file);
   };
 
-  const mascotEmoji = contact.mascot === 'cat' ? '🐱' : contact.mascot === 'bear' ? '🐻' : contact.mascot === 'dog' ? '🐶' : null;
-  const statusInfo = STATUS_OPTIONS.find(s => s.label === contact.currentStatus);
+  const mascotEmoji = (contactProfile?.mascot || contact.mascot) === 'cat' ? '🐱' : (contactProfile?.mascot || contact.mascot) === 'bear' ? '🐻' : (contactProfile?.mascot || contact.mascot) === 'dog' ? '🐶' : null;
+  const statusInfo = STATUS_OPTIONS.find(s => s.label === (contactProfile?.currentStatus || contact.currentStatus));
 
   const onEmojiClick = (emojiData: EmojiClickData) => {
     setInputText(prev => prev + emojiData.emoji);
@@ -2494,9 +2518,9 @@ function ChatView({ user, contact, onBack, setModal }: { user: UserProfile, cont
           )}
         </div>
         <div className="flex-1 min-w-0">
-          <h3 className="font-bold truncate">{contact.name}</h3>
+          <h3 className="font-bold truncate">{contactProfile?.name || contact.name}</h3>
           <p className="text-[10px] text-[#F48FB1] font-bold uppercase tracking-wider">
-            {contact.currentStatus ? `Está ${contact.currentStatus}` : 'Online'}
+            {(contactProfile?.currentStatus || contact.currentStatus) ? `Está ${(contactProfile?.currentStatus || contact.currentStatus)}` : 'Online'}
           </p>
         </div>
         <div className="flex gap-2">
@@ -2546,28 +2570,28 @@ function ChatView({ user, contact, onBack, setModal }: { user: UserProfile, cont
                 <Music className="w-5 h-5 text-purple-500" />
                 <div className="overflow-hidden">
                   <p className="text-[10px] text-purple-400 font-bold uppercase">Música</p>
-                  <p className="text-sm font-bold text-slate-700 truncate">{contact.favorites?.music || '---'}</p>
+                  <p className="text-sm font-bold text-slate-700 truncate">{(contactProfile?.favorites?.music || contact.favorites?.music) || '---'}</p>
                 </div>
               </div>
               <div className="bg-blue-50 p-3 rounded-2xl flex items-center gap-3">
                 <Gamepad className="w-5 h-5 text-blue-500" />
                 <div className="overflow-hidden">
                   <p className="text-[10px] text-blue-400 font-bold uppercase">Jogo</p>
-                  <p className="text-sm font-bold text-slate-700 truncate">{contact.favorites?.game || '---'}</p>
+                  <p className="text-sm font-bold text-slate-700 truncate">{(contactProfile?.favorites?.game || contact.favorites?.game) || '---'}</p>
                 </div>
               </div>
               <div className="bg-pink-50 p-3 rounded-2xl flex items-center gap-3">
                 <Palette className="w-5 h-5 text-pink-500" />
                 <div className="overflow-hidden">
                   <p className="text-[10px] text-pink-400 font-bold uppercase">Cor</p>
-                  <p className="text-sm font-bold text-slate-700 truncate">{contact.favorites?.color || '---'}</p>
+                  <p className="text-sm font-bold text-slate-700 truncate">{(contactProfile?.favorites?.color || contact.favorites?.color) || '---'}</p>
                 </div>
               </div>
               <div className="bg-orange-50 p-3 rounded-2xl flex items-center gap-3">
                 <Utensils className="w-5 h-5 text-orange-500" />
                 <div className="overflow-hidden">
                   <p className="text-[10px] text-orange-400 font-bold uppercase">Comida</p>
-                  <p className="text-sm font-bold text-slate-700 truncate">{contact.favorites?.food || '---'}</p>
+                  <p className="text-sm font-bold text-slate-700 truncate">{(contactProfile?.favorites?.food || contact.favorites?.food) || '---'}</p>
                 </div>
               </div>
             </div>
@@ -2576,7 +2600,7 @@ function ChatView({ user, contact, onBack, setModal }: { user: UserProfile, cont
       </AnimatePresence>
 
       {/* Mascot Status Overlay */}
-      {mascotEmoji && contact.currentStatus && (
+      {mascotEmoji && (contactProfile?.currentStatus || contact.currentStatus) && (
         <div className="bg-[#81D4FA]/10 p-3 flex items-center justify-center gap-3 border-b border-[#81D4FA]/20">
           <div className="text-3xl animate-bounce">
             {mascotEmoji}
@@ -2584,7 +2608,7 @@ function ChatView({ user, contact, onBack, setModal }: { user: UserProfile, cont
           <div className="bg-white px-4 py-1.5 rounded-full shadow-sm border border-slate-100">
             <p className="text-xs font-bold text-slate-700 flex items-center gap-2">
               {statusInfo?.icon}
-              {contact.name} está {contact.currentStatus}!
+              {(contactProfile?.name || contact.name)} está {(contactProfile?.currentStatus || contact.currentStatus)}!
             </p>
           </div>
         </div>
