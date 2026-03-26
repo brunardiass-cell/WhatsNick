@@ -219,12 +219,19 @@ export default function App() {
       setContacts(contactsList);
 
       // Update activeChat if it exists in the new contacts list to keep data fresh
-      if (activeChat) {
-        const updatedActiveChat = contactsList.find(c => c.uid === activeChat.uid);
-        if (updatedActiveChat) {
-          setActiveChat(updatedActiveChat);
+      // Using functional update to avoid stale closure and unnecessary re-renders if possible
+      setActiveChat(prev => {
+        if (!prev) return null;
+        const updated = contactsList.find(c => c.uid === prev.uid);
+        if (!updated) return prev;
+        // Only update if something actually changed to avoid unnecessary re-renders
+        if (updated.lastMessageAt?.toMillis?.() === prev.lastMessageAt?.toMillis?.() && 
+            updated.hasUnread === prev.hasUnread &&
+            updated.lastMessageText === prev.lastMessageText) {
+          return prev;
         }
-      }
+        return updated;
+      });
       
       const unreadCount = contactsList.filter(c => c.hasUnread).length;
       if (unreadCount > 0) {
@@ -2304,6 +2311,11 @@ function ChatView({ user, contact, onBack, setModal }: { user: UserProfile, cont
 
   const contactUid = contact.uid;
   const chatId = [user.uid, contactUid].sort().join('_');
+  const contactRef = useRef(contact);
+
+  useEffect(() => {
+    contactRef.current = contact;
+  }, [contact]);
 
   // Listen to contact's real profile for fresh favorites and status
   useEffect(() => {
@@ -2318,7 +2330,10 @@ function ChatView({ user, contact, onBack, setModal }: { user: UserProfile, cont
 
   useEffect(() => {
     if (!chatId || !user.uid || !contactUid) return;
+    
+    // Primary query with ordering
     const q = query(collection(db, 'chats_v3', chatId, 'messages'), orderBy('timestamp', 'asc'));
+    
     const unsubscribe = onSnapshot(q, (snapshot) => {
       try {
         const newMessages = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as Message));
@@ -2328,7 +2343,8 @@ function ChatView({ user, contact, onBack, setModal }: { user: UserProfile, cont
         if (newMessages.length > 0) {
           const lastMsg = newMessages[newMessages.length - 1];
           // Only clear if the last message was from the other person and it's unread
-          if (lastMsg.senderId !== user.uid && contact.hasUnread) {
+          // Use contactRef to avoid re-subscribing the listener when contact object changes
+          if (lastMsg.senderId !== user.uid && contactRef.current.hasUnread) {
             updateDoc(doc(db, 'users_v3', user.uid, 'contacts', contactUid), { 
               hasUnread: false 
             }).catch(() => {});
@@ -2345,10 +2361,24 @@ function ChatView({ user, contact, onBack, setModal }: { user: UserProfile, cont
         console.error("Error processing messages snapshot:", err);
       }
     }, (error) => {
+      // If index is missing, fallback to unordered query to keep the app working
+      if (error.code === 'failed-precondition') {
+        console.warn("Firestore index missing for messages, falling back to unordered query.");
+        return onSnapshot(collection(db, 'chats_v3', chatId, 'messages'), (fallbackSnap) => {
+          const fallbackMsgs = fallbackSnap.docs
+            .map(doc => ({ id: doc.id, ...doc.data() } as Message))
+            .sort((a, b) => {
+              const tA = a.timestamp?.toDate ? a.timestamp.toDate().getTime() : (a.timestamp ? new Date(a.timestamp).getTime() : 0);
+              const tB = b.timestamp?.toDate ? b.timestamp.toDate().getTime() : (b.timestamp ? new Date(b.timestamp).getTime() : 0);
+              return tA - tB;
+            });
+          setMessages(fallbackMsgs);
+        });
+      }
       handleFirestoreError(error, OperationType.LIST, `chats_v3/${chatId}/messages`);
     });
     return () => unsubscribe();
-  }, [chatId, user.uid, contactUid, contact.hasUnread]);
+  }, [chatId, user.uid, contactUid]); // Removed contact.hasUnread to prevent churn
 
   const sendMessage = async (mediaUrl?: string, mediaType: 'text' | 'image' | 'call' = 'text', meetUrl?: string) => {
     if ((!inputText.trim() && !mediaUrl) || isSending || !contactUid) return;
