@@ -296,6 +296,12 @@ export default function App() {
     // Close prompt immediately for better UX
     setShowMoodPrompt(false);
     
+    // Safety timeout
+    const timeoutId = setTimeout(() => {
+      setIsUpdating(false);
+      setSelectedMoodLabel(null);
+    }, 10000);
+
     try {
       await setDoc(doc(db, 'users_v3', user.uid), { 
         mood, 
@@ -303,21 +309,21 @@ export default function App() {
         moodUpdatedAt: serverTimestamp() 
       }, { merge: true });
       
-      // Update this user's mood in everyone's contact list who has them (background)
-      const contactsSnap = await getDocs(collection(db, 'users_v3', user.uid, 'contacts'));
-      const updatePromises = contactsSnap.docs.map(async (contactDoc) => {
-        const contactId = contactDoc.id;
-        return setDoc(doc(db, 'users_v3', contactId, 'contacts', user.uid), {
-          mood,
-          moodEmoji: emoji
-        }, { merge: true }).catch(() => {});
-      });
-      
-      await Promise.all(updatePromises);
+      // Update this user's mood in everyone's contact list who has them (background/non-blocking)
+      getDocs(collection(db, 'users_v3', user.uid, 'contacts')).then(contactsSnap => {
+        contactsSnap.docs.forEach((contactDoc) => {
+          const contactId = contactDoc.id;
+          setDoc(doc(db, 'users_v3', contactId, 'contacts', user.uid), {
+            mood,
+            moodEmoji: emoji
+          }, { merge: true }).catch(() => {});
+        });
+      }).catch(err => console.warn("Failed to fetch contacts for mood update:", err));
+
     } catch (error) {
       console.error("Error updating mood:", error);
-      // If it failed, we might want to show the prompt again, but for now let's just log
     } finally {
+      clearTimeout(timeoutId);
       setSelectedMoodLabel(null);
       setTimeout(() => setIsUpdating(false), 500); // Prevent double click
     }
@@ -326,22 +332,28 @@ export default function App() {
   const updateProfilePhoto = async (photoURL: string) => {
     if (!user || isUpdating) return;
     setIsUpdating(true);
+
+    const timeoutId = setTimeout(() => {
+      setIsUpdating(false);
+    }, 10000);
+
     try {
       await setDoc(doc(db, 'users_v3', user.uid), { photoURL }, { merge: true });
       
-      // Update this user's photo in everyone's contact list who has them
-      const contactsSnap = await getDocs(collection(db, 'users_v3', user.uid, 'contacts'));
-      const updatePromises = contactsSnap.docs.map(async (contactDoc) => {
-        const contactId = contactDoc.id;
-        return setDoc(doc(db, 'users_v3', contactId, 'contacts', user.uid), {
-          photoURL
-        }, { merge: true }).catch(() => {});
-      });
-      
-      await Promise.all(updatePromises);
+      // Update this user's photo in everyone's contact list who has them (background/non-blocking)
+      getDocs(collection(db, 'users_v3', user.uid, 'contacts')).then(contactsSnap => {
+        contactsSnap.docs.forEach((contactDoc) => {
+          const contactId = contactDoc.id;
+          setDoc(doc(db, 'users_v3', contactId, 'contacts', user.uid), {
+            photoURL
+          }, { merge: true }).catch(() => {});
+        });
+      }).catch(err => console.warn("Failed to fetch contacts for photo update:", err));
+
     } catch (error) {
       handleFirestoreError(error, OperationType.WRITE, `users_v3/${user.uid}`);
     } finally {
+      clearTimeout(timeoutId);
       setIsUpdating(false);
     }
   };
@@ -349,6 +361,11 @@ export default function App() {
   const updateTrustedSOSContact = async (email: string) => {
     if (!user || isUpdating) return;
     setIsUpdating(true);
+    
+    const timeoutId = setTimeout(() => {
+      setIsUpdating(false);
+    }, 10000);
+
     try {
       await setDoc(doc(db, 'users_v3', user.uid), { 
         trustedSOSContactEmail: email 
@@ -356,6 +373,7 @@ export default function App() {
     } catch (error) {
       handleFirestoreError(error, OperationType.WRITE, `users_v3/${user.uid}`);
     } finally {
+      clearTimeout(timeoutId);
       setIsUpdating(false);
     }
   };
@@ -363,23 +381,32 @@ export default function App() {
   const updateStatus = async (status: string) => {
     if (!user || isUpdating) return;
     setIsUpdating(true);
+    
+    // Set a safety timeout to reset isUpdating
+    const timeoutId = setTimeout(() => {
+      setIsUpdating(false);
+    }, 10000);
+
     try {
+      // Primary update: User's own profile
       await setDoc(doc(db, 'users_v3', user.uid), { 
         currentStatus: status 
       }, { merge: true });
       
-      // Update this user's status in everyone's contact list who has them (background)
-      const contactsSnap = await getDocs(collection(db, 'users_v3', user.uid, 'contacts'));
-      const updatePromises = contactsSnap.docs.map(async (contactDoc) => {
-        const contactId = contactDoc.id;
-        return setDoc(doc(db, 'users_v3', contactId, 'contacts', user.uid), {
-          currentStatus: status
-        }, { merge: true }).catch(() => {});
-      });
-      await Promise.all(updatePromises);
+      // Update this user's status in everyone's contact list who has them (background/non-blocking)
+      getDocs(collection(db, 'users_v3', user.uid, 'contacts')).then(contactsSnap => {
+        contactsSnap.docs.forEach((contactDoc) => {
+          const contactId = contactDoc.id;
+          setDoc(doc(db, 'users_v3', contactId, 'contacts', user.uid), {
+            currentStatus: status
+          }, { merge: true }).catch(() => {});
+        });
+      }).catch(err => console.warn("Failed to fetch contacts for status update:", err));
+
     } catch (error) {
       handleFirestoreError(error, OperationType.WRITE, `users_v3/${user.uid}`);
     } finally {
+      clearTimeout(timeoutId);
       setIsUpdating(false);
     }
   };
@@ -387,23 +414,30 @@ export default function App() {
   const updateMascot = async (mascot: string) => {
     if (!user || isUpdating) return;
     setIsUpdating(true);
+    
+    const timeoutId = setTimeout(() => {
+      setIsUpdating(false);
+    }, 10000);
+
     try {
       await setDoc(doc(db, 'users_v3', user.uid), { 
         mascot: mascot 
       }, { merge: true });
       
-      // Update this user's mascot in everyone's contact list who has them (background)
-      const contactsSnap = await getDocs(collection(db, 'users_v3', user.uid, 'contacts'));
-      const updatePromises = contactsSnap.docs.map(async (contactDoc) => {
-        const contactId = contactDoc.id;
-        return setDoc(doc(db, 'users_v3', contactId, 'contacts', user.uid), {
-          mascot: mascot
-        }, { merge: true }).catch(() => {});
-      });
-      await Promise.all(updatePromises);
+      // Update this user's mascot in everyone's contact list who has them (background/non-blocking)
+      getDocs(collection(db, 'users_v3', user.uid, 'contacts')).then(contactsSnap => {
+        contactsSnap.docs.forEach((contactDoc) => {
+          const contactId = contactDoc.id;
+          setDoc(doc(db, 'users_v3', contactId, 'contacts', user.uid), {
+            mascot: mascot
+          }, { merge: true }).catch(() => {});
+        });
+      }).catch(err => console.warn("Failed to fetch contacts for mascot update:", err));
+
     } catch (error) {
       handleFirestoreError(error, OperationType.WRITE, `users_v3/${user.uid}`);
     } finally {
+      clearTimeout(timeoutId);
       setIsUpdating(false);
     }
   };
@@ -411,23 +445,30 @@ export default function App() {
   const updateFavorites = async (favorites: any) => {
     if (!user || isUpdating) return;
     setIsUpdating(true);
+
+    const timeoutId = setTimeout(() => {
+      setIsUpdating(false);
+    }, 10000);
+
     try {
       await setDoc(doc(db, 'users_v3', user.uid), { 
         favorites: favorites 
       }, { merge: true });
       
-      // Update this user's favorites in everyone's contact list who has them (background)
-      const contactsSnap = await getDocs(collection(db, 'users_v3', user.uid, 'contacts'));
-      const updatePromises = contactsSnap.docs.map(async (contactDoc) => {
-        const contactId = contactDoc.id;
-        return setDoc(doc(db, 'users_v3', contactId, 'contacts', user.uid), {
-          favorites: favorites
-        }, { merge: true }).catch(() => {});
-      });
-      await Promise.all(updatePromises);
+      // Update this user's favorites in everyone's contact list who has them (background/non-blocking)
+      getDocs(collection(db, 'users_v3', user.uid, 'contacts')).then(contactsSnap => {
+        contactsSnap.docs.forEach((contactDoc) => {
+          const contactId = contactDoc.id;
+          setDoc(doc(db, 'users_v3', contactId, 'contacts', user.uid), {
+            favorites: favorites
+          }, { merge: true }).catch(() => {});
+        });
+      }).catch(err => console.warn("Failed to fetch contacts for favorites update:", err));
+
     } catch (error) {
       handleFirestoreError(error, OperationType.WRITE, `users_v3/${user.uid}`);
     } finally {
+      clearTimeout(timeoutId);
       setIsUpdating(false);
     }
   };
@@ -1586,6 +1627,12 @@ function FamilyView({ user, setModal, setView, setActiveChat, isAdding, setIsAdd
     if (!emailInput || isAdding) return;
     setIsAdding(true);
     const normalizedEmail = emailInput.toLowerCase().trim();
+    
+    // Safety timeout
+    const timeoutId = setTimeout(() => {
+      setIsAdding(false);
+    }, 15000);
+
     try {
       const q = query(collection(db, 'users_v3'), where('email', '==', normalizedEmail));
       const snapshot = await getDocs(q);
@@ -1631,6 +1678,7 @@ function FamilyView({ user, setModal, setView, setActiveChat, isAdding, setIsAdd
     } catch (error) {
       handleFirestoreError(error, OperationType.WRITE, `users_v3/${user.uid}/contacts`);
     } finally {
+      clearTimeout(timeoutId);
       setIsAdding(false);
     }
   };
@@ -2324,6 +2372,8 @@ function ChatView({ user, contact, onBack, setModal }: { user: UserProfile, cont
       if (docSnap.exists()) {
         setContactProfile(docSnap.data() as UserProfile);
       }
+    }, (error) => {
+      console.error("Error listening to contact profile:", error);
     });
     return () => unsub();
   }, [contactUid]);
@@ -2391,6 +2441,11 @@ function ChatView({ user, contact, onBack, setModal }: { user: UserProfile, cont
     setInputText('');
     setShowEmoji(false);
 
+    // Safety timeout to reset isSending if it hangs
+    const timeoutId = setTimeout(() => {
+      setIsSending(false);
+    }, 15000);
+
     try {
       // Add message to chat
       await addDoc(collection(db, 'chats_v3', chatId, 'messages'), {
@@ -2408,19 +2463,16 @@ function ChatView({ user, contact, onBack, setModal }: { user: UserProfile, cont
         lastMessageText: mediaType === 'text' ? text : (mediaType === 'image' ? '📷 Foto' : '📞 Chamada'),
       };
 
-      // Update contact lists - wrapped in separate try-catch to not block message sending
-      try {
-        await setDoc(doc(db, 'users_v3', user.uid, 'contacts', contactUid), lastMsgUpdate, { merge: true });
-        await setDoc(doc(db, 'users_v3', contactUid, 'contacts', user.uid), { ...lastMsgUpdate, hasUnread: true }, { merge: true });
-      } catch (e) {
-        console.warn("Failed to update contact list metadata, but message was sent:", e);
-      }
+      // Update contact lists - NON-BLOCKING to avoid hanging the UI
+      setDoc(doc(db, 'users_v3', user.uid, 'contacts', contactUid), lastMsgUpdate, { merge: true }).catch(() => {});
+      setDoc(doc(db, 'users_v3', contactUid, 'contacts', user.uid), { ...lastMsgUpdate, hasUnread: true }, { merge: true }).catch(() => {});
 
     } catch (error) {
       // Restore input on failure
       setInputText(currentInput);
       handleFirestoreError(error, OperationType.WRITE, `chats_v3/${chatId}/messages`);
     } finally {
+      clearTimeout(timeoutId);
       setIsSending(false);
     }
   };
