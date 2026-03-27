@@ -1,24 +1,32 @@
 import { initializeApp } from 'firebase/app';
 import { getAuth, GoogleAuthProvider, signInWithPopup, signOut, onAuthStateChanged, setPersistence, browserLocalPersistence } from 'firebase/auth';
-import { getFirestore, collection, doc, setDoc, getDoc, getDocs, query, where, onSnapshot, addDoc, orderBy, serverTimestamp, getDocFromServer, deleteDoc, updateDoc, deleteField, enableNetwork, disableNetwork } from 'firebase/firestore';
+import { initializeFirestore, collection, doc, setDoc, getDoc, getDocs, query, where, onSnapshot, addDoc, orderBy, serverTimestamp, getDocFromServer, deleteDoc, updateDoc, deleteField, enableNetwork, disableNetwork } from 'firebase/firestore';
 import firebaseConfig from '../firebase-applet-config.json';
 
 const app = initializeApp(firebaseConfig);
 export const auth = getAuth(app);
 setPersistence(auth, browserLocalPersistence);
 
-// Improved Firestore initialization with fallback
+// Improved Firestore initialization with fallback and long polling
 let dbInstance;
 try {
   const dbId = (firebaseConfig as any).firestoreDatabaseId;
+  const firestoreSettings = {
+    experimentalForceLongPolling: true,
+    useFetchStreams: false
+  };
+
   if (dbId && dbId !== "(default)") {
-    console.log("Initializing Firestore with named database:", dbId);
-    dbInstance = getFirestore(app, dbId);
+    console.log("Initializing Firestore with named database:", dbId, "and long polling enabled.");
+    dbInstance = initializeFirestore(app, firestoreSettings, dbId);
   } else {
-    dbInstance = getFirestore(app);
+    console.log("Initializing Firestore with default database and long polling enabled.");
+    dbInstance = initializeFirestore(app, firestoreSettings);
   }
 } catch (e) {
-  console.error("Failed to initialize named Firestore, falling back to default:", e);
+  console.error("Failed to initialize Firestore with settings, falling back to basic getFirestore:", e);
+  // Fallback to basic initialization if initializeFirestore fails
+  const { getFirestore } = require('firebase/firestore');
   dbInstance = getFirestore(app);
 }
 

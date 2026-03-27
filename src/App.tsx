@@ -94,6 +94,7 @@ class ErrorBoundary extends Component<{ children: React.ReactNode }, { hasError:
 }
 
 export default function App() {
+  console.log("App component loading. Firestore initialized:", !!db);
   const [user, setUser] = useState<UserProfile | null>(null);
   const [loading, setLoading] = useState(true);
   const [isLoggingIn, setIsLoggingIn] = useState(false);
@@ -976,12 +977,20 @@ function MainLayout({ user, activeTab, setActiveTab, setView, setActiveChat, set
               <WifiOff size={12} />
               <span>{connectionError || "Você está offline. As mensagens podem não ser enviadas."}</span>
             </div>
-            <button 
-              onClick={retryConnection}
-              className="bg-white/20 hover:bg-white/30 px-2 py-0.5 rounded font-medium transition-colors"
-            >
-              Tentar Reconectar
-            </button>
+            <div className="flex items-center gap-2">
+              <button 
+                onClick={retryConnection}
+                className="bg-white/20 hover:bg-white/30 px-2 py-0.5 rounded font-medium transition-colors"
+              >
+                Tentar Reconectar
+              </button>
+              <button 
+                onClick={() => window.location.reload()}
+                className="bg-white/20 hover:bg-white/30 px-2 py-0.5 rounded font-medium transition-colors"
+              >
+                Atualizar Página
+              </button>
+            </div>
           </div>
         )}
         <div className="flex-1 overflow-y-auto">
