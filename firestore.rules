@@ -143,6 +143,10 @@ service cloud.firestore {
     // Rules
     // ===============================================================
 
+    match /test/connection {
+      allow read: if isAuthenticated();
+    }
+
     match /users_v3/{userId} {
       allow read: if isAuthenticated(); 
       allow create: if isAuthenticated() && isValidUser(request.resource.data) && (request.auth.uid == userId);

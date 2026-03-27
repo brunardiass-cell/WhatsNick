@@ -104,9 +104,11 @@ export default function App() {
   const [connectionError, setConnectionError] = useState<string | null>(null);
 
   const retryConnection = async () => {
+    if (!auth.currentUser) return;
     try {
       await enableNetwork(db);
-      await getDocFromServer(doc(db, 'test', 'connection'));
+      // Try to read the user's own doc from server
+      await getDocFromServer(doc(db, 'users_v3', auth.currentUser.uid));
       setIsOnline(true);
       setConnectionError(null);
     } catch (err: any) {
@@ -119,17 +121,19 @@ export default function App() {
   // Monitor connection status
   useEffect(() => {
     const interval = setInterval(async () => {
+      if (!auth.currentUser) return;
       try {
-        await getDocFromServer(doc(db, 'test', 'connection'));
+        await getDocFromServer(doc(db, 'users_v3', auth.currentUser.uid));
         setIsOnline(true);
         setConnectionError(null);
       } catch (err: any) {
+        // Only set offline if it's a real network error
         if (err.code === 'unavailable' || err.message?.includes('offline')) {
           setIsOnline(false);
           setConnectionError("Sem conexão com o servidor do Firebase.");
         }
       }
-    }, 10000);
+    }, 20000);
 
     return () => clearInterval(interval);
   }, []);
@@ -189,6 +193,8 @@ export default function App() {
         // Real-time listener for user profile
         unsubProfile = onSnapshot(doc(db, 'users_v3', firebaseUser.uid), async (userDoc) => {
           console.log("User profile snapshot received:", userDoc.exists());
+          setIsOnline(true);
+          setConnectionError(null);
           if (userDoc.exists()) {
             const userData = { uid: userDoc.id, ...userDoc.data() } as UserProfile;
             setUser(userData);
@@ -983,6 +989,12 @@ function MainLayout({ user, activeTab, setActiveTab, setView, setActiveChat, set
                 className="bg-white/20 hover:bg-white/30 px-2 py-0.5 rounded font-medium transition-colors"
               >
                 Tentar Reconectar
+              </button>
+              <button 
+                onClick={() => setModal({ title: "Erro de Conexão", message: connectionError || "Erro desconhecido", type: 'alert' })}
+                className="bg-white/20 hover:bg-white/30 px-2 py-0.5 rounded font-medium transition-colors"
+              >
+                Ver Erro
               </button>
               <button 
                 onClick={() => window.location.reload()}
