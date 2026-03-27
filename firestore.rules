@@ -177,15 +177,15 @@ service cloud.firestore {
     }
 
     match /chats_v3/{chatId} {
-      allow read: if isAuthenticated() && (chatId.matches(".*" + request.auth.uid + ".*") || isAdmin());
+      allow read: if isAuthenticated() && (chatId.split('_').hasAny([request.auth.uid]) || isAdmin());
       
       match /messages/{messageId} {
-        allow read: if isAuthenticated() && (chatId.matches(".*" + request.auth.uid + ".*") || isAdmin());
+        allow read: if isAuthenticated() && (chatId.split('_').hasAny([request.auth.uid]) || isAdmin());
         allow create: if isAuthenticated() && 
                       isValidMessage(request.resource.data) &&
                       (request.resource.data.senderId == request.auth.uid) &&
-                      (chatId.matches(".*" + request.auth.uid + ".*"));
-        allow delete: if isAuthenticated() && (chatId.matches(".*" + request.auth.uid + ".*") || isAdmin());
+                      (chatId.split('_').hasAny([request.auth.uid]));
+        allow delete: if isAuthenticated() && (chatId.split('_').hasAny([request.auth.uid]) || isAdmin());
       }
     }
 

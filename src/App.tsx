@@ -2469,8 +2469,8 @@ function ChatView({ user, contact, onBack, setModal, isOnline }: { user: UserPro
           // Client-side sort if index is missing
           if (!useIndex) {
             newMessages.sort((a, b) => {
-              const tA = a.timestamp?.toDate ? a.timestamp.toDate().getTime() : (a.timestamp ? new Date(a.timestamp).getTime() : 0);
-              const tB = b.timestamp?.toDate ? b.timestamp.toDate().getTime() : (b.timestamp ? new Date(b.timestamp).getTime() : 0);
+              const tA = a.timestamp?.toDate ? a.timestamp.toDate().getTime() : (a.timestamp ? new Date(a.timestamp).getTime() : Date.now());
+              const tB = b.timestamp?.toDate ? b.timestamp.toDate().getTime() : (b.timestamp ? new Date(b.timestamp).getTime() : Date.now());
               return tA - tB;
             });
           }
@@ -2541,7 +2541,14 @@ function ChatView({ user, contact, onBack, setModal, isOnline }: { user: UserPro
     }, 15000);
 
     try {
-      console.log("Sending message to:", contactUid);
+      console.log("Attempting to send message:", {
+        chatId,
+        senderId: user.uid,
+        receiverId: contactUid,
+        mediaType,
+        textLength: text.length
+      });
+      
       // Add message to chat
       await addDoc(collection(db, 'chats_v3', chatId, 'messages'), {
         senderId: user.uid,
@@ -2566,7 +2573,15 @@ function ChatView({ user, contact, onBack, setModal, isOnline }: { user: UserPro
     } catch (error) {
       // Restore input on failure
       setInputText(currentInput);
-      handleFirestoreError(error, OperationType.WRITE, `chats_v3/${chatId}/messages`);
+      console.error("Failed to send message:", error);
+      
+      const errInfo = handleFirestoreError(error, OperationType.WRITE, `chats_v3/${chatId}/messages`);
+      
+      setModal({
+        title: "Erro ao enviar mensagem",
+        message: `Não foi possível enviar sua mensagem. Detalhes: ${error instanceof Error ? error.message : String(error)}`,
+        type: 'alert'
+      });
     } finally {
       clearTimeout(timeoutId);
       setIsSending(false);
@@ -2605,6 +2620,7 @@ function ChatView({ user, contact, onBack, setModal, isOnline }: { user: UserPro
         senderId: user.uid,
         receiverId: contactUid,
         text: '🔔 Chamou sua atenção!',
+        mediaType: 'text',
         timestamp: serverTimestamp()
       });
 
