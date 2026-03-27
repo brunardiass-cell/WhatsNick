@@ -123,17 +123,17 @@ export default function App() {
     const interval = setInterval(async () => {
       if (!auth.currentUser) return;
       try {
+        // Try to read the user's own doc from server
         await getDocFromServer(doc(db, 'users_v3', auth.currentUser.uid));
         setIsOnline(true);
         setConnectionError(null);
       } catch (err: any) {
-        // Only set offline if it's a real network error
-        if (err.code === 'unavailable' || err.message?.includes('offline')) {
-          setIsOnline(false);
-          setConnectionError("Sem conexão com o servidor do Firebase.");
-        }
+        console.error("Connection check failed:", err);
+        // Always set offline if getDocFromServer fails, as it means we can't reach the server
+        setIsOnline(false);
+        setConnectionError(err.message || "Sem conexão com o servidor do Firebase.");
       }
-    }, 20000);
+    }, 300000); // 5 minutes (300,000 ms) as requested to save quota
 
     return () => clearInterval(interval);
   }, []);
@@ -2464,7 +2464,11 @@ function ChatView({ user, contact, onBack, setModal, isOnline }: { user: UserPro
 
       return onSnapshot(q, (snapshot) => {
         try {
-          let newMessages = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as Message));
+          let newMessages = snapshot.docs.map(doc => ({ 
+            id: doc.id, 
+            ...doc.data(),
+            isPending: doc.metadata.hasPendingWrites 
+          } as Message & { isPending: boolean }));
           
           // Client-side sort if index is missing
           if (!useIndex) {
@@ -2861,14 +2865,17 @@ function ChatView({ user, contact, onBack, setModal, isOnline }: { user: UserPro
                     )}
                   </p>
                 )}
-                <p className={cn("text-[9px] mt-1 opacity-70", msg.senderId === user.uid ? "text-right" : "text-left")}>
-                  {msg.timestamp && typeof msg.timestamp.toDate === 'function' 
-                    ? format(msg.timestamp.toDate(), 'HH:mm') 
-                    : (msg.timestamp instanceof Date && isValid(msg.timestamp))
-                      ? format(msg.timestamp, 'HH:mm')
-                      : (typeof msg.timestamp === 'string' && isValid(new Date(msg.timestamp)))
-                        ? format(new Date(msg.timestamp), 'HH:mm')
-                        : '...'}
+                <p className={cn("text-[9px] mt-1 opacity-70 flex items-center gap-1", msg.senderId === user.uid ? "justify-end" : "justify-start")}>
+                  {(msg as any).isPending && <Clock className="w-2 h-2 animate-spin" />}
+                  {(msg as any).isPending ? 'Enviando...' : (
+                    msg.timestamp && typeof msg.timestamp.toDate === 'function' 
+                      ? format(msg.timestamp.toDate(), 'HH:mm') 
+                      : (msg.timestamp instanceof Date && isValid(msg.timestamp))
+                        ? format(msg.timestamp, 'HH:mm')
+                        : (typeof msg.timestamp === 'string' && isValid(new Date(msg.timestamp)))
+                          ? format(new Date(msg.timestamp), 'HH:mm')
+                          : '...'
+                  )}
                 </p>
               </div>
             </React.Fragment>

@@ -177,15 +177,20 @@ service cloud.firestore {
     }
 
     match /chats_v3/{chatId} {
-      allow read: if isAuthenticated() && (chatId.split('_').hasAny([request.auth.uid]) || isAdmin());
+      // Allow access if the user's UID is part of the chatId (either as first or second part)
+      function isChatParticipant(cid) {
+        return cid.matches("^" + request.auth.uid + "_.*") || cid.matches(".*_" + request.auth.uid + "$");
+      }
+
+      allow read: if isAuthenticated() && (isChatParticipant(chatId) || isAdmin());
       
       match /messages/{messageId} {
-        allow read: if isAuthenticated() && (chatId.split('_').hasAny([request.auth.uid]) || isAdmin());
+        allow read: if isAuthenticated() && (isChatParticipant(chatId) || isAdmin());
         allow create: if isAuthenticated() && 
                       isValidMessage(request.resource.data) &&
                       (request.resource.data.senderId == request.auth.uid) &&
-                      (chatId.split('_').hasAny([request.auth.uid]));
-        allow delete: if isAuthenticated() && (chatId.split('_').hasAny([request.auth.uid]) || isAdmin());
+                      (isChatParticipant(chatId));
+        allow delete: if isAuthenticated() && (isChatParticipant(chatId) || isAdmin());
       }
     }
 
