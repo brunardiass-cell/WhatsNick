@@ -1,7 +1,8 @@
 import React, { useState, useEffect, useRef, Component } from 'react';
 import { 
   auth, db, googleProvider, signInWithPopup, signOut, onAuthStateChanged,
-  collection, doc, setDoc, getDoc, getDocs, query, where, onSnapshot, addDoc, orderBy, serverTimestamp, deleteDoc, updateDoc, deleteField
+  collection, doc, setDoc, getDoc, getDocs, query, where, onSnapshot, addDoc, orderBy, serverTimestamp, deleteDoc, updateDoc, deleteField,
+  enableNetwork, getDocFromServer
 } from './firebase';
 import { UserProfile, Contact, Message, PendingInvite, UserRole, MascotType, StatusType } from './types';
 import { cn } from './utils';
@@ -10,7 +11,7 @@ import {
   UserPlus, Check, X, LogOut, Settings, User, MapPin, Clock,
   ChevronLeft, Image as ImageIcon, Smile, Trash2, Video, Users, Bell,
   Star, Cat, Dog, Gamepad2, Music, Palette, Utensils, Activity, Heart,
-  Gamepad, Coffee, Book, Home, MessageSquare, Briefcase
+  Gamepad, Coffee, Book, Home, MessageSquare, Briefcase, Wifi, WifiOff
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { format, isValid } from 'date-fns';
@@ -98,6 +99,39 @@ export default function App() {
   const [isLoggingIn, setIsLoggingIn] = useState(false);
   const [isSelectingRole, setIsSelectingRole] = useState(false);
   const [isUpdating, setIsUpdating] = useState(false);
+  const [isOnline, setIsOnline] = useState(true);
+  const [connectionError, setConnectionError] = useState<string | null>(null);
+
+  const retryConnection = async () => {
+    try {
+      await enableNetwork(db);
+      await getDocFromServer(doc(db, 'test', 'connection'));
+      setIsOnline(true);
+      setConnectionError(null);
+    } catch (err: any) {
+      console.error("Retry connection failed:", err);
+      setIsOnline(false);
+      setConnectionError("Falha ao reconectar. Verifique sua internet.");
+    }
+  };
+
+  // Monitor connection status
+  useEffect(() => {
+    const interval = setInterval(async () => {
+      try {
+        await getDocFromServer(doc(db, 'test', 'connection'));
+        setIsOnline(true);
+        setConnectionError(null);
+      } catch (err: any) {
+        if (err.code === 'unavailable' || err.message?.includes('offline')) {
+          setIsOnline(false);
+          setConnectionError("Sem conexão com o servidor do Firebase.");
+        }
+      }
+    }, 10000);
+
+    return () => clearInterval(interval);
+  }, []);
   const [isAdding, setIsAdding] = useState(false);
   const [isProcessingInvite, setIsProcessingInvite] = useState(false);
   const [contacts, setContacts] = useState<Contact[]>([]);
@@ -776,6 +810,9 @@ export default function App() {
                 updateStatus={updateStatus}
                 updateMascot={updateMascot}
                 updateFavorites={updateFavorites}
+                isOnline={isOnline}
+                connectionError={connectionError}
+                retryConnection={retryConnection}
               />
             </div>
             <div className={cn(
@@ -787,6 +824,7 @@ export default function App() {
                   user={user} 
                   contact={activeChat} 
                   setModal={setModal}
+                  isOnline={isOnline}
                   onBack={() => {
                     setActiveChat(null);
                     if (window.innerWidth < 768) setView('main');
@@ -886,7 +924,7 @@ export default function App() {
   );
 }
 
-function MainLayout({ user, activeTab, setActiveTab, setView, setActiveChat, setModal, moods, avatars, updateMood, updateProfilePhoto, pendingInvites, acceptInvite, declineInvite, setShowAddFriendModal, onClearContacts, isUpdating, isAdding, setIsAdding, isProcessingInvite, contacts, onSOS, updateTrustedSOSContact, updateStatus, updateMascot, updateFavorites }: any) {
+function MainLayout({ user, activeTab, setActiveTab, setView, setActiveChat, setModal, moods, avatars, updateMood, updateProfilePhoto, pendingInvites, acceptInvite, declineInvite, setShowAddFriendModal, onClearContacts, isUpdating, isAdding, setIsAdding, isProcessingInvite, contacts, onSOS, updateTrustedSOSContact, updateStatus, updateMascot, updateFavorites, isOnline, connectionError, retryConnection }: any) {
   return (
     <div className="flex flex-col md:flex-row h-full bg-white w-full">
       {/* Sidebar Navigation (Desktop) / Bottom Navigation (Mobile) */}
@@ -931,6 +969,21 @@ function MainLayout({ user, activeTab, setActiveTab, setView, setActiveChat, set
       </div>
 
       <div className="order-1 md:order-2 flex-1 overflow-hidden relative flex flex-col h-full">
+        {/* Connection Status Banner */}
+        {!isOnline && (
+          <div className="bg-red-500 text-white text-[10px] py-1 px-4 flex items-center justify-between animate-pulse shrink-0">
+            <div className="flex items-center gap-2">
+              <WifiOff size={12} />
+              <span>{connectionError || "Você está offline. As mensagens podem não ser enviadas."}</span>
+            </div>
+            <button 
+              onClick={retryConnection}
+              className="bg-white/20 hover:bg-white/30 px-2 py-0.5 rounded font-medium transition-colors"
+            >
+              Tentar Reconectar
+            </button>
+          </div>
+        )}
         <div className="flex-1 overflow-y-auto">
           {activeTab === 'chats' && (
             user.role === 'parent' 
@@ -2347,7 +2400,7 @@ function StatusView({ user, setModal, isUpdating, updateStatus }: { user: UserPr
   );
 }
 
-function ChatView({ user, contact, onBack, setModal }: { user: UserProfile, contact: Contact, onBack: () => void, setModal: (m: any) => void }) {
+function ChatView({ user, contact, onBack, setModal, isOnline }: { user: UserProfile, contact: Contact, onBack: () => void, setModal: (m: any) => void, isOnline: boolean }) {
   const [messages, setMessages] = useState<Message[]>([]);
   const [inputText, setInputText] = useState('');
   const [showEmoji, setShowEmoji] = useState(false);
@@ -2381,58 +2434,78 @@ function ChatView({ user, contact, onBack, setModal }: { user: UserProfile, cont
   useEffect(() => {
     if (!chatId || !user.uid || !contactUid) return;
     
-    // Primary query with ordering
-    const q = query(collection(db, 'chats_v3', chatId, 'messages'), orderBy('timestamp', 'asc'));
-    
-    const unsubscribe = onSnapshot(q, (snapshot) => {
-      try {
-        const newMessages = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as Message));
-        setMessages(newMessages);
-        
-        // Update last message timestamp in contacts to clear notifications
-        if (newMessages.length > 0) {
-          const lastMsg = newMessages[newMessages.length - 1];
-          // Only clear if the last message was from the other person and it's unread
-          // Use contactRef to avoid re-subscribing the listener when contact object changes
-          if (lastMsg.senderId !== user.uid && contactRef.current.hasUnread) {
-            updateDoc(doc(db, 'users_v3', user.uid, 'contacts', contactUid), { 
-              hasUnread: false 
-            }).catch(() => {});
-          }
-        }
+    const unsubscribeRef = { current: null as any };
 
-        // Auto scroll to bottom
-        setTimeout(() => {
-          if (scrollRef.current) {
-            scrollRef.current.scrollIntoView({ behavior: 'auto', block: 'end' });
-          }
-        }, 100);
-      } catch (err) {
-        console.error("Error processing messages snapshot:", err);
-      }
-    }, (error) => {
-      // If index is missing, fallback to unordered query to keep the app working
-      if (error.code === 'failed-precondition') {
-        console.warn("Firestore index missing for messages, falling back to unordered query.");
-        return onSnapshot(collection(db, 'chats_v3', chatId, 'messages'), (fallbackSnap) => {
-          const fallbackMsgs = fallbackSnap.docs
-            .map(doc => ({ id: doc.id, ...doc.data() } as Message))
-            .sort((a, b) => {
+    const setupListener = (useIndex: boolean) => {
+      const q = useIndex 
+        ? query(collection(db, 'chats_v3', chatId, 'messages'), orderBy('timestamp', 'asc'))
+        : query(collection(db, 'chats_v3', chatId, 'messages'));
+
+      return onSnapshot(q, (snapshot) => {
+        try {
+          let newMessages = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as Message));
+          
+          // Client-side sort if index is missing
+          if (!useIndex) {
+            newMessages.sort((a, b) => {
               const tA = a.timestamp?.toDate ? a.timestamp.toDate().getTime() : (a.timestamp ? new Date(a.timestamp).getTime() : 0);
               const tB = b.timestamp?.toDate ? b.timestamp.toDate().getTime() : (b.timestamp ? new Date(b.timestamp).getTime() : 0);
               return tA - tB;
             });
-          setMessages(fallbackMsgs);
-        });
-      }
-      handleFirestoreError(error, OperationType.LIST, `chats_v3/${chatId}/messages`);
-    });
-    return () => unsubscribe();
+          }
+          
+          setMessages(newMessages);
+          
+          // Update last message timestamp in contacts to clear notifications
+          if (newMessages.length > 0) {
+            const lastMsg = newMessages[newMessages.length - 1];
+            if (lastMsg.senderId !== user.uid && contactRef.current.hasUnread) {
+              updateDoc(doc(db, 'users_v3', user.uid, 'contacts', contactUid), { 
+                hasUnread: false 
+              }).catch(() => {});
+            }
+          }
+
+          // Auto scroll to bottom
+          setTimeout(() => {
+            if (scrollRef.current) {
+              scrollRef.current.scrollIntoView({ behavior: 'auto', block: 'end' });
+            }
+          }, 100);
+        } catch (err) {
+          console.error("Error processing messages snapshot:", err);
+        }
+      }, (error) => {
+        console.error("Messages listener error:", error);
+        if (error.code === 'failed-precondition' && useIndex) {
+          console.warn("Index missing, falling back to client-side sort");
+          if (unsubscribeRef.current) unsubscribeRef.current();
+          unsubscribeRef.current = setupListener(false);
+        } else {
+          handleFirestoreError(error, OperationType.LIST, `chats_v3/${chatId}/messages`);
+        }
+      });
+    };
+
+    unsubscribeRef.current = setupListener(true);
+
+    return () => {
+      if (unsubscribeRef.current) unsubscribeRef.current();
+    };
   }, [chatId, user.uid, contactUid]); // Removed contact.hasUnread to prevent churn
 
   const sendMessage = async (mediaUrl?: string, mediaType: 'text' | 'image' | 'call' = 'text', meetUrl?: string) => {
     if ((!inputText.trim() && !mediaUrl) || isSending || !contactUid) return;
     
+    if (!isOnline) {
+      setModal({
+        title: "Você está offline",
+        message: "Não é possível enviar mensagens enquanto estiver offline. Verifique sua conexão e tente novamente.",
+        type: 'alert'
+      });
+      return;
+    }
+
     setIsSending(true);
     const text = inputText.trim();
     const currentInput = inputText;
@@ -2447,6 +2520,7 @@ function ChatView({ user, contact, onBack, setModal }: { user: UserProfile, cont
     }, 15000);
 
     try {
+      console.log("Sending message to:", contactUid);
       // Add message to chat
       await addDoc(collection(db, 'chats_v3', chatId, 'messages'), {
         senderId: user.uid,
@@ -2457,6 +2531,7 @@ function ChatView({ user, contact, onBack, setModal }: { user: UserProfile, cont
         meetUrl: meetUrl || '',
         timestamp: serverTimestamp()
       });
+      console.log("Message write successful");
 
       const lastMsgUpdate = {
         lastMessageAt: serverTimestamp(),
