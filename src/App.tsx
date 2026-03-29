@@ -93,6 +93,54 @@ class ErrorBoundary extends Component<{ children: React.ReactNode }, { hasError:
   }
 }
 
+const resizeImage = (file: File): Promise<string> => {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = (e) => {
+      const img = new Image();
+      img.onload = () => {
+        const canvas = document.createElement('canvas');
+        let width = img.width;
+        let height = img.height;
+        const maxWidth = 800;
+
+        if (width > maxWidth) {
+          height = (height * maxWidth) / width;
+          width = maxWidth;
+        }
+
+        canvas.width = width;
+        canvas.height = height;
+        const ctx = canvas.getContext('2d');
+        ctx?.drawImage(img, 0, 0, width, height);
+        resolve(canvas.toDataURL('image/jpeg', 0.7));
+      };
+      img.onerror = reject;
+      img.src = e.target?.result as string;
+    };
+    reader.onerror = reject;
+    reader.readAsDataURL(file);
+  });
+};
+
+const uploadToCloudinary = async (base64: string): Promise<string> => {
+  const formData = new FormData();
+  formData.append('file', base64);
+  formData.append('upload_preset', 'fotos_nicky');
+
+  const response = await fetch('https://api.cloudinary.com/v1_1/ddabm9rcs/image/upload', {
+    method: 'POST',
+    body: formData,
+  });
+
+  if (!response.ok) {
+    throw new Error('Failed to upload image to Cloudinary');
+  }
+
+  const data = await response.json();
+  return data.secure_url;
+};
+
 export default function App() {
   console.log("App component loading. Firestore initialized:", !!db);
   const [user, setUser] = useState<UserProfile | null>(null);
@@ -2128,19 +2176,17 @@ function SettingsView({ user, onLogout, setModal, moods, avatars, updateMood, up
     if (!file) return;
 
     setUploading(true);
-    const reader = new FileReader();
-    reader.onload = async (event) => {
-      const base64 = event.target?.result as string;
-      try {
-        await updateProfilePhoto(base64);
-        setModal({ title: 'Sucesso', message: 'Foto de perfil atualizada!', type: 'alert' });
-      } catch (error) {
-        // Error handled in updateProfilePhoto
-      } finally {
-        setUploading(false);
-      }
-    };
-    reader.readAsDataURL(file);
+    try {
+      const optimizedBase64 = await resizeImage(file);
+      const cloudinaryUrl = await uploadToCloudinary(optimizedBase64);
+      await updateProfilePhoto(cloudinaryUrl);
+      setModal({ title: 'Sucesso', message: 'Foto de perfil atualizada!', type: 'alert' });
+    } catch (error) {
+      console.error("Error uploading profile photo:", error);
+      setModal({ title: 'Erro', message: 'Falha ao atualizar foto de perfil.', type: 'alert' });
+    } finally {
+      setUploading(false);
+    }
   };
 
   const selectAvatar = async (url: string) => {
@@ -2613,45 +2659,17 @@ function ChatView({ user, contact, onBack, setModal, isOnline }: { user: UserPro
     window.open(meetUrl, '_blank');
   };
 
-  const resizeImage = (file: File): Promise<string> => {
-    return new Promise((resolve, reject) => {
-      const reader = new FileReader();
-      reader.onload = (e) => {
-        const img = new Image();
-        img.onload = () => {
-          const canvas = document.createElement('canvas');
-          let width = img.width;
-          let height = img.height;
-          const maxWidth = 800;
-
-          if (width > maxWidth) {
-            height = (height * maxWidth) / width;
-            width = maxWidth;
-          }
-
-          canvas.width = width;
-          canvas.height = height;
-          const ctx = canvas.getContext('2d');
-          ctx?.drawImage(img, 0, 0, width, height);
-          resolve(canvas.toDataURL('image/jpeg', 0.7));
-        };
-        img.onerror = reject;
-        img.src = e.target?.result as string;
-      };
-      reader.onerror = reject;
-      reader.readAsDataURL(file);
-    });
-  };
-
   const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
 
     try {
       const optimizedBase64 = await resizeImage(file);
-      sendMessage(optimizedBase64, 'image');
+      const cloudinaryUrl = await uploadToCloudinary(optimizedBase64);
+      sendMessage(cloudinaryUrl, 'image');
     } catch (error) {
-      console.error("Error optimizing image:", error);
+      console.error("Error uploading image:", error);
+      setModal({ title: 'Erro', message: 'Falha ao enviar imagem.', type: 'alert' });
     }
   };
 
