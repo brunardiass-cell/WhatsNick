@@ -3,7 +3,7 @@ import { Timestamp } from 'firebase/firestore';
 export type UserRole = 'parent' | 'child';
 
 export type MascotType = 'cat' | 'bear' | 'dog' | 'none';
-export type StatusType = 'brincando' | 'estudando' | 'dormindo' | 'conversando' | 'trabalhando' | 'comendo' | 'arrumando';
+export type StatusType = 'brincando' | 'estudando' | 'dormindo' | 'conversando' | 'trabalhando' | 'comendo' | 'academia';
 
 export interface UserProfile {
   uid: string;

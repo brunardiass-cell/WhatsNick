@@ -2,7 +2,7 @@ import React, { useState, useEffect, useRef, Component } from 'react';
 import { 
   auth, db, googleProvider, signInWithPopup, signOut, onAuthStateChanged,
   collection, doc, setDoc, getDoc, getDocs, query, where, onSnapshot, addDoc, orderBy, serverTimestamp, deleteDoc, updateDoc, deleteField,
-  enableNetwork, getDocFromServer
+  enableNetwork, getDocFromServer, limit
 } from './firebase';
 import { UserProfile, Contact, Message, PendingInvite, UserRole, MascotType, StatusType } from './types';
 import { cn } from './utils';
@@ -100,6 +100,7 @@ export default function App() {
   const [isLoggingIn, setIsLoggingIn] = useState(false);
   const [isSelectingRole, setIsSelectingRole] = useState(false);
   const [isUpdating, setIsUpdating] = useState(false);
+  const [isSendingSOS, setIsSendingSOS] = useState(false);
   const [isOnline, setIsOnline] = useState(true);
   const [connectionError, setConnectionError] = useState<string | null>(null);
 
@@ -645,26 +646,33 @@ export default function App() {
   };
 
   const handleSOS = async () => {
-    if (!user) return;
+    if (!user || isSendingSOS) return;
 
     setModal({
       title: 'Acionar SOS?',
       message: 'Isso enviará um alerta imediato com sua localização para seus responsáveis.',
       type: 'confirm',
       onConfirm: async () => {
+        setIsSendingSOS(true);
         try {
-          // Get location
+          // Get location with 10s timeout
           navigator.geolocation.getCurrentPosition(async (position) => {
             const { latitude, longitude } = position.coords;
             const location = { lat: latitude, lng: longitude };
 
-            // Find target email
+            // Find target email - optimized with cache
             let targetEmail = user.trustedSOSContactEmail || user.email; // Use trusted contact if set, otherwise self
             
             if (!user.trustedSOSContactEmail && user.role === 'child' && user.parentId) {
-              const parentDoc = await getDoc(doc(db, 'users_v3', user.parentId));
-              if (parentDoc.exists()) {
-                targetEmail = parentDoc.data().email;
+              // Try to find parent in existing contacts first to avoid extra getDoc
+              const parentInContacts = contacts.find(c => c.uid === user.parentId);
+              if (parentInContacts && parentInContacts.email) {
+                targetEmail = parentInContacts.email;
+              } else {
+                const parentDoc = await getDoc(doc(db, 'users_v3', user.parentId));
+                if (parentDoc.exists()) {
+                  targetEmail = parentDoc.data().email;
+                }
               }
             }
 
@@ -689,6 +697,7 @@ export default function App() {
             } else {
               throw new Error('Falha ao enviar e-mail de SOS');
             }
+            setIsSendingSOS(false);
           }, (error) => {
             console.error("Erro ao obter localização:", error);
             setModal({
@@ -696,7 +705,8 @@ export default function App() {
               message: 'Não foi possível obter sua localização. Verifique as permissões do navegador.',
               type: 'alert'
             });
-          });
+            setIsSendingSOS(false);
+          }, { timeout: 10000 });
         } catch (error) {
           console.error("Erro no SOS:", error);
           setModal({
@@ -704,6 +714,7 @@ export default function App() {
             message: 'Ocorreu um erro ao processar o alerta SOS.',
             type: 'alert'
           });
+          setIsSendingSOS(false);
         }
       }
     });
@@ -812,7 +823,8 @@ export default function App() {
                 setIsAdding={setIsAdding}
                 isProcessingInvite={isProcessingInvite}
                 contacts={contacts}
-                onSOS={handleSOS}
+                 onSOS={handleSOS}
+                 isSendingSOS={isSendingSOS}
                 updateTrustedSOSContact={updateTrustedSOSContact}
                 updateStatus={updateStatus}
                 updateMascot={updateMascot}
@@ -931,7 +943,7 @@ export default function App() {
   );
 }
 
-function MainLayout({ user, activeTab, setActiveTab, setView, setActiveChat, setModal, moods, avatars, updateMood, updateProfilePhoto, pendingInvites, acceptInvite, declineInvite, setShowAddFriendModal, onClearContacts, isUpdating, isAdding, setIsAdding, isProcessingInvite, contacts, onSOS, updateTrustedSOSContact, updateStatus, updateMascot, updateFavorites, isOnline, connectionError, retryConnection }: any) {
+function MainLayout({ user, activeTab, setActiveTab, setView, setActiveChat, setModal, moods, avatars, updateMood, updateProfilePhoto, pendingInvites, acceptInvite, declineInvite, setShowAddFriendModal, onClearContacts, isUpdating, isAdding, setIsAdding, isProcessingInvite, contacts, onSOS, isSendingSOS, updateTrustedSOSContact, updateStatus, updateMascot, updateFavorites, isOnline, connectionError, retryConnection }: any) {
   return (
     <div className="flex flex-col md:flex-row h-full bg-white w-full">
       {/* Sidebar Navigation (Desktop) / Bottom Navigation (Mobile) */}
@@ -1033,7 +1045,7 @@ function MainLayout({ user, activeTab, setActiveTab, setView, setActiveChat, set
                   contacts={contacts}
                 />
           )}
-          {activeTab === 'calls' && <CallsView user={user} setActiveChat={setActiveChat} setView={setView} setModal={setModal} onSOS={onSOS} />}
+          {activeTab === 'calls' && <CallsView user={user} setActiveChat={setActiveChat} setView={setView} setModal={setModal} onSOS={onSOS} isSendingSOS={isSendingSOS} />}
           {activeTab === 'status' && (
             <StatusView 
               user={user} 
@@ -1451,7 +1463,7 @@ function ChildDashboard({ user, setView, setActiveChat, setModal, pendingInvites
   );
 }
 
-function CallsView({ user, setActiveChat, setView, setModal, onSOS }: { user: UserProfile, setActiveChat: (c: any) => void, setView: (v: any) => void, setModal: (m: any) => void, onSOS: () => void }) {
+function CallsView({ user, setActiveChat, setView, setModal, onSOS, isSendingSOS }: { user: UserProfile, setActiveChat: (c: any) => void, setView: (v: any) => void, setModal: (m: any) => void, onSOS: () => void, isSendingSOS: boolean }) {
   const [contacts, setContacts] = useState<Contact[]>([]);
 
   useEffect(() => {
@@ -1489,10 +1501,14 @@ function CallsView({ user, setActiveChat, setView, setModal, onSOS }: { user: Us
           </button>
           <button 
             onClick={onSOS}
-            className="bg-red-500 hover:bg-red-600 text-white px-4 py-2 rounded-xl text-sm font-bold transition-colors flex items-center gap-2 shadow-lg"
+            disabled={isSendingSOS}
+            className={cn(
+              "px-4 py-2 rounded-xl text-sm font-bold transition-colors flex items-center gap-2 shadow-lg",
+              isSendingSOS ? "bg-slate-400 cursor-not-allowed" : "bg-red-500 hover:bg-red-600 text-white"
+            )}
           >
             <AlertTriangle className="w-4 h-4" />
-            SOS
+            {isSendingSOS ? 'Enviando...' : 'SOS'}
           </button>
         </div>
       </header>
@@ -2359,7 +2375,7 @@ const STATUS_OPTIONS: { label: StatusType, icon: any, color: string, description
   { label: 'conversando', icon: <MessageSquare className="w-5 h-5" />, color: '#81D4FA', description: 'Batendo um papo.' },
   { label: 'trabalhando', icon: <Briefcase className="w-5 h-5" />, color: '#F48FB1', description: 'Em reunião ou tarefa.' },
   { label: 'comendo', icon: <Utensils className="w-5 h-5" />, color: '#CE93D8', description: 'Hora do lanche!' },
-  { label: 'arrumando', icon: <Home className="w-5 h-5" />, color: '#81D4FA', description: 'Organizando tudo.' },
+  { label: 'academia', icon: <Home className="w-5 h-5" />, color: '#81D4FA', description: 'Organizando tudo.' },
 ];
 
 const MASCOT_OPTIONS: { type: MascotType, emoji: string, label: string }[] = [
@@ -2459,8 +2475,8 @@ function ChatView({ user, contact, onBack, setModal, isOnline }: { user: UserPro
 
     const setupListener = (useIndex: boolean) => {
       const q = useIndex 
-        ? query(collection(db, 'chats_v3', chatId, 'messages'), orderBy('timestamp', 'asc'))
-        : query(collection(db, 'chats_v3', chatId, 'messages'));
+        ? query(collection(db, 'chats_v3', chatId, 'messages'), orderBy('timestamp', 'desc'), limit(20))
+        : query(collection(db, 'chats_v3', chatId, 'messages'), limit(20));
 
       return onSnapshot(q, (snapshot) => {
         try {
@@ -2470,14 +2486,12 @@ function ChatView({ user, contact, onBack, setModal, isOnline }: { user: UserPro
             isPending: doc.metadata.hasPendingWrites 
           } as Message & { isPending: boolean }));
           
-          // Client-side sort if index is missing
-          if (!useIndex) {
-            newMessages.sort((a, b) => {
-              const tA = a.timestamp?.toDate ? a.timestamp.toDate().getTime() : (a.timestamp ? new Date(a.timestamp).getTime() : Date.now());
-              const tB = b.timestamp?.toDate ? b.timestamp.toDate().getTime() : (b.timestamp ? new Date(b.timestamp).getTime() : Date.now());
-              return tA - tB;
-            });
-          }
+          // Client-side sort to ensure correct order after limiting
+          newMessages.sort((a, b) => {
+            const tA = a.timestamp?.toDate ? a.timestamp.toDate().getTime() : (a.timestamp ? new Date(a.timestamp).getTime() : Date.now());
+            const tB = b.timestamp?.toDate ? b.timestamp.toDate().getTime() : (b.timestamp ? new Date(b.timestamp).getTime() : Date.now());
+            return tA - tB;
+          });
           
           setMessages(newMessages);
           
@@ -2599,16 +2613,46 @@ function ChatView({ user, contact, onBack, setModal, isOnline }: { user: UserPro
     window.open(meetUrl, '_blank');
   };
 
+  const resizeImage = (file: File): Promise<string> => {
+    return new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onload = (e) => {
+        const img = new Image();
+        img.onload = () => {
+          const canvas = document.createElement('canvas');
+          let width = img.width;
+          let height = img.height;
+          const maxWidth = 800;
+
+          if (width > maxWidth) {
+            height = (height * maxWidth) / width;
+            width = maxWidth;
+          }
+
+          canvas.width = width;
+          canvas.height = height;
+          const ctx = canvas.getContext('2d');
+          ctx?.drawImage(img, 0, 0, width, height);
+          resolve(canvas.toDataURL('image/jpeg', 0.7));
+        };
+        img.onerror = reject;
+        img.src = e.target?.result as string;
+      };
+      reader.onerror = reject;
+      reader.readAsDataURL(file);
+    });
+  };
+
   const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
 
-    const reader = new FileReader();
-    reader.onload = async (event) => {
-      const base64 = event.target?.result as string;
-      sendMessage(base64, 'image');
-    };
-    reader.readAsDataURL(file);
+    try {
+      const optimizedBase64 = await resizeImage(file);
+      sendMessage(optimizedBase64, 'image');
+    } catch (error) {
+      console.error("Error optimizing image:", error);
+    }
   };
 
   const mascotEmoji = (contactProfile?.mascot || contact.mascot) === 'cat' ? '🐱' : (contactProfile?.mascot || contact.mascot) === 'bear' ? '🐻' : (contactProfile?.mascot || contact.mascot) === 'dog' ? '🐶' : null;
