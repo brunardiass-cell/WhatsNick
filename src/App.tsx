@@ -232,8 +232,11 @@ export default function App() {
 
           if (token) {
             console.log('FCM Token received:', token);
-            // Save token to Firestore users_v3 document
-            await setDoc(doc(db, 'users_v3', user.uid), { fcmToken: token }, { merge: true });
+            // Save token and lastOrigin to Firestore users_v3 document
+            await setDoc(doc(db, 'users_v3', user.uid), { 
+              fcmToken: token,
+              lastOrigin: window.location.origin
+            }, { merge: true });
           } else {
             console.warn('No FCM token received.');
           }

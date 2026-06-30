@@ -59,16 +59,38 @@ export default async function handler(req: any, res: any) {
 
     const userData = userDoc.data();
     const fcmToken = userData?.fcmToken;
+    const lastOrigin = userData?.lastOrigin;
 
     if (!fcmToken) {
       console.warn(`No FCM Token found for user ${toUid}`);
       return res.json({ success: false, reason: "No FCM Token found for this user." });
     }
 
+    // Try to get dynamic link from request context or lastOrigin or standard fallback
+    const fallbackOrigin = "https://ais-pre-xbn6ncjpnjsoquekskewi6-80440826789.us-east1.run.app";
+    const headerOrigin = req.headers.referer || req.headers.origin;
+    let webLink = lastOrigin || fallbackOrigin;
+    if (headerOrigin) {
+      try {
+        webLink = new URL(headerOrigin).origin;
+      } catch (e) {
+        // Ignore parsing error
+      }
+    }
+
+    const title = fromName || "Nova mensagem";
+    const body = text || "Enviou uma nova mensagem";
+
     const message = {
       notification: {
-        title: fromName || "Nova mensagem",
-        body: text || "Enviou uma nova mensagem",
+        title,
+        body,
+      },
+      data: {
+        title,
+        body,
+        click_action: webLink,
+        link: webLink,
       },
       android: {
         notification: {
@@ -82,6 +104,21 @@ export default async function handler(req: any, res: any) {
             badge: 1,
             sound: "default"
           }
+        }
+      },
+      webpush: {
+        headers: {
+          Urgency: "high"
+        },
+        notification: {
+          title,
+          body,
+          icon: "/icon.svg",
+          badge: "/icon.svg",
+          requireInteraction: true,
+        },
+        fcmOptions: {
+          link: webLink,
         }
       },
       token: fcmToken,

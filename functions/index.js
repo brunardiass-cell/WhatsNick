@@ -37,17 +37,27 @@ exports.sendNotificationOnMessage = functions.firestore
 
       const receiverData = receiverDoc.data();
       const fcmToken = receiverData.fcmToken;
+      const lastOrigin = receiverData.lastOrigin || "https://ais-pre-xbn6ncjpnjsoquekskewi6-80440826789.us-east1.run.app";
 
       if (!fcmToken) {
         console.log(`Receiver ${receiverId} does not have an FCM token registered.`);
         return null;
       }
 
+      const title = senderName;
+      const body = text || "Enviou uma nova mensagem";
+
       // 3. Construct FCM Payload
       const payload = {
         notification: {
-          title: senderName,
-          body: text || "Enviou uma nova mensagem",
+          title,
+          body,
+        },
+        data: {
+          title,
+          body,
+          click_action: lastOrigin,
+          link: lastOrigin,
         },
         android: {
           notification: {
@@ -61,6 +71,21 @@ exports.sendNotificationOnMessage = functions.firestore
               sound: "default",
               badge: 1
             }
+          }
+        },
+        webpush: {
+          headers: {
+            Urgency: "high"
+          },
+          notification: {
+            title,
+            body,
+            icon: "/icon.svg",
+            badge: "/icon.svg",
+            requireInteraction: true,
+          },
+          fcmOptions: {
+            link: lastOrigin
           }
         },
         token: fcmToken

@@ -14,15 +14,44 @@ const messaging = firebase.messaging();
 
 messaging.onBackgroundMessage((payload) => {
   console.log('[firebase-messaging-sw.js] Received background message ', payload);
-  const notificationTitle = payload.notification?.title || "Nova mensagem!";
+  const notificationTitle = payload.notification?.title || payload.data?.title || "Nova mensagem!";
   const notificationOptions = {
-    body: payload.notification?.body || "Acesse o WhatsNicky para conferir.",
+    body: payload.notification?.body || payload.data?.body || "Acesse o WhatsNicky para conferir.",
     icon: '/icon.svg',
     badge: '/icon.svg',
-    data: payload.data
+    data: payload.data || {}
   };
 
   self.registration.showNotification(notificationTitle, notificationOptions);
+});
+
+self.addEventListener('notificationclick', (event) => {
+  event.notification.close();
+
+  // Get the click action link, fallback to self.location.origin
+  let urlToOpen = '/';
+  if (event.notification.data && (event.notification.data.link || event.notification.data.click_action)) {
+    urlToOpen = event.notification.data.link || event.notification.data.click_action;
+  } else {
+    urlToOpen = self.location.origin;
+  }
+
+  event.waitUntil(
+    self.clients.matchAll({ type: 'window', includeUncontrolled: true })
+      .then((windowClients) => {
+        // Check if there is already a window tab open with our origin
+        for (let i = 0; i < windowClients.length; i++) {
+          const client = windowClients[i];
+          if (client.url.includes(self.location.origin) && 'focus' in client) {
+            return client.focus();
+          }
+        }
+        // If no window is open, open a new tab
+        if (self.clients.openWindow) {
+          return self.clients.openWindow(urlToOpen);
+        }
+      })
+  );
 });
 
 const CACHE_NAME = 'whatsnicky-v2'; // Bumped version to force cache refresh
