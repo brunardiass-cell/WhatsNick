@@ -9,7 +9,7 @@ import { cn } from './utils';
 import { 
   MessageCircle, Shield, Phone, Camera, Send, AlertTriangle, 
   UserPlus, Check, X, LogOut, Settings, User, MapPin, Clock,
-  ChevronLeft, Image as ImageIcon, Smile, Trash2, Video, Users, Bell,
+  ChevronLeft, Image as ImageIcon, Smile, Trash2, Video, Users, Bell, BellRing,
   Star, Cat, Dog, Gamepad2, Music, Palette, Utensils, Activity, Heart,
   Gamepad, Coffee, Book, Home, MessageSquare, Briefcase, Wifi, WifiOff
 } from 'lucide-react';
@@ -198,12 +198,68 @@ export default function App() {
   const [pendingInvites, setPendingInvites] = useState<PendingInvite[]>([]);
   const [showAddFriendModal, setShowAddFriendModal] = useState(false);
   const [friendEmailInput, setFriendEmailInput] = useState('');
+  const [showIOSNotificationPrompt, setShowIOSNotificationPrompt] = useState(false);
+
+  const handleRequestIOSNotification = async () => {
+    console.log("[FCM_CLIENT_DEBUG] User tapped the custom iOS activate notifications button.");
+    if (typeof window === 'undefined' || !('serviceWorker' in navigator) || !('Notification' in window)) {
+      alert("Seu navegador ou dispositivo não suporta notificações.");
+      return;
+    }
+    
+    try {
+      const permission = await Notification.requestPermission();
+      console.log('[FCM_CLIENT_DEBUG] iOS Notification permission request result:', permission);
+      
+      if (permission === 'granted') {
+        const registration = await navigator.serviceWorker.register('/firebase-messaging-sw.js');
+        if (!messaging) {
+          console.warn('[FCM_CLIENT_DEBUG] FCM messaging is null or undefined.');
+          alert("O serviço de mensagens do Firebase ainda não foi carregado. Tente novamente em alguns instantes.");
+          return;
+        }
+
+        const vapidKey = (import.meta as any).env.VITE_FCM_VAPID_KEY;
+        const tokenOptions = {
+          serviceWorkerRegistration: registration,
+          ...(vapidKey ? { vapidKey } : {})
+        };
+
+        const token = await getToken(messaging, tokenOptions);
+        if (token && user?.uid) {
+          console.log('[FCM_CLIENT_DEBUG] iOS Token generated successfully after click:', token);
+          await setDoc(doc(db, 'users_v3', user.uid), { 
+            fcmToken: token,
+            lastOrigin: window.location.origin
+          }, { merge: true });
+          
+          console.log('[FCM_CLIENT_DEBUG] iOS Token saved to users_v3.');
+          setShowIOSNotificationPrompt(false);
+          setModal({
+            type: 'alert',
+            title: 'Notificações Ativadas!',
+            message: 'Tudo pronto! Você receberá avisos quando Nicky ou sua família mandarem novas mensagens.'
+          });
+        } else {
+          console.warn('[FCM_CLIENT_DEBUG] Failed to get FCM token on iOS.');
+          alert("Não foi possível gerar as chaves de notificação. Verifique sua conexão de internet.");
+        }
+      } else {
+        console.warn('[FCM_CLIENT_DEBUG] iOS Permission denied on interactive request:', permission);
+        alert("Para receber as notificações, você precisa permitir nas configurações do seu iPhone (Ajustes > WhatsNicky > Notificações).");
+        setShowIOSNotificationPrompt(false);
+      }
+    } catch (err: any) {
+      console.error('[FCM_CLIENT_DEBUG] Error in handleRequestIOSNotification:', err);
+      alert("Erro ao ativar notificações: " + err.message);
+    }
+  };
 
   // Initialize service worker and register PWA notifications
   useEffect(() => {
     if (!user?.uid) return;
 
-    const registerNotificationSystem = async () => {
+    const registerNotificationSystem = async (forceRequest: boolean = false) => {
       if (typeof window === 'undefined' || !('serviceWorker' in navigator) || !('Notification' in window)) {
         console.log("[FCM_CLIENT_DEBUG] PWA/Notifications not supported by this browser.");
         return;
@@ -214,6 +270,22 @@ export default function App() {
         // Register Service Worker
         const registration = await navigator.serviceWorker.register('/firebase-messaging-sw.js');
         console.log('[FCM_CLIENT_DEBUG] Service Worker registered with scope:', registration.scope);
+
+        // iOS Standalone (Installed PWA) specific check
+        const isIOS = /iPad|iPhone|iPod/.test(navigator.userAgent) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
+        const isStandalone = (window.navigator as any).standalone === true || window.matchMedia('(display-mode: standalone)').matches;
+        
+        console.log("[FCM_CLIENT_DEBUG] Client environment check:", { isIOS, isStandalone, forceRequest });
+
+        if (isIOS && isStandalone && !forceRequest) {
+          const currentPermission = Notification.permission;
+          console.log("[FCM_CLIENT_DEBUG] iOS Standalone detected. Current permission status:", currentPermission);
+          if (currentPermission !== 'granted') {
+            console.log("[FCM_CLIENT_DEBUG] iOS standalone mode and notification permission is not granted. Showing custom iOS notification banner.");
+            setShowIOSNotificationPrompt(true);
+            return;
+          }
+        }
 
         // Request Permission
         const permission = await Notification.requestPermission();
@@ -1022,6 +1094,45 @@ export default function App() {
                   className="px-4 py-2 bg-[#F48FB1] text-white rounded-xl font-bold"
                 >
                   {modal.type === 'confirm' ? 'Confirmar' : 'OK'}
+                </button>
+              </div>
+            </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
+
+      {/* iOS Standalone Notification Prompt Modal */}
+      <AnimatePresence>
+        {showIOSNotificationPrompt && (
+          <div className="fixed inset-0 bg-black/60 flex items-center justify-center p-6 z-[120] backdrop-blur-sm">
+            <motion.div 
+              initial={{ scale: 0.9, opacity: 0, y: 50 }} 
+              animate={{ scale: 1, opacity: 1, y: 0 }} 
+              exit={{ scale: 0.9, opacity: 0, y: 50 }}
+              className="bg-white w-full max-w-sm rounded-3xl p-6 shadow-2xl border-4 border-[#F48FB1]/10 text-center relative overflow-hidden"
+            >
+              <div className="mx-auto w-20 h-20 bg-pink-50 rounded-full flex items-center justify-center mb-4">
+                <BellRing className="w-10 h-10 text-[#F48FB1] animate-bounce" />
+              </div>
+
+              <h3 className="text-xl font-bold text-slate-800 mb-2">Ativar Notificações</h3>
+              <p className="text-slate-600 mb-6 text-sm leading-relaxed">
+                Para que o aplicativo funcione perfeitamente no seu iPhone, ative os alertas de novas mensagens do WhatsNicky e da sua família!
+              </p>
+
+              <div className="flex flex-col gap-2">
+                <button 
+                  onClick={handleRequestIOSNotification}
+                  className="w-full py-3.5 bg-[#CE93D8] hover:bg-[#BA68C8] text-white rounded-2xl font-bold shadow-lg shadow-[#CE93D8]/30 transition-all active:scale-[0.98] flex items-center justify-center gap-2"
+                >
+                  <Bell className="w-5 h-5" />
+                  Ativar Alertas Agora
+                </button>
+                <button 
+                  onClick={() => setShowIOSNotificationPrompt(false)}
+                  className="w-full py-2.5 text-slate-400 font-semibold text-sm hover:text-slate-600 transition-colors"
+                >
+                  Mais Tarde
                 </button>
               </div>
             </motion.div>
