@@ -113,8 +113,8 @@ export default async function handler(req: any, res: any) {
         notification: {
           title,
           body,
-          icon: "/icon.svg",
-          badge: "/icon.svg",
+          icon: `${webLink}/icon.png`,
+          badge: `${webLink}/icon.png`,
           requireInteraction: true,
         },
         fcmOptions: {

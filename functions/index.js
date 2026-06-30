@@ -80,8 +80,8 @@ exports.sendNotificationOnMessage = functions.firestore
           notification: {
             title,
             body,
-            icon: "/icon.svg",
-            badge: "/icon.svg",
+            icon: `${lastOrigin}/icon.png`,
+            badge: `${lastOrigin}/icon.png`,
             requireInteraction: true,
           },
           fcmOptions: {

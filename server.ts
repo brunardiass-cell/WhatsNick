@@ -50,6 +50,14 @@ async function startServer() {
     app.use(vite.middlewares);
   } else {
     const distPath = path.join(process.cwd(), 'dist');
+    
+    // Serve service worker with no-cache headers to ensure immediate updates
+    app.get('/firebase-messaging-sw.js', (req, res) => {
+      res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate, proxy-revalidate');
+      res.setHeader('Content-Type', 'application/javascript');
+      res.sendFile(path.join(distPath, 'firebase-messaging-sw.js'));
+    });
+
     app.use(express.static(distPath));
     app.get('*', (req, res, next) => {
       // Prevent serving index.html for missing assets or api routes

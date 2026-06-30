@@ -12,13 +12,13 @@ firebase.initializeApp({
 
 const messaging = firebase.messaging();
 
-messaging.onBackgroundMessage((payload) => {
+  messaging.onBackgroundMessage((payload) => {
   console.log('[firebase-messaging-sw.js] Received background message ', payload);
   const notificationTitle = payload.notification?.title || payload.data?.title || "Nova mensagem!";
   const notificationOptions = {
     body: payload.notification?.body || payload.data?.body || "Acesse o WhatsNicky para conferir.",
-    icon: '/icon.svg',
-    badge: '/icon.svg',
+    icon: '/icon.png',
+    badge: '/icon.png',
     data: payload.data || {}
   };
 
@@ -54,12 +54,13 @@ self.addEventListener('notificationclick', (event) => {
   );
 });
 
-const CACHE_NAME = 'whatsnicky-v2'; // Bumped version to force cache refresh
+const CACHE_NAME = 'whatsnicky-v3'; // Bumped version to force cache refresh
 const ASSETS = [
   '/',
   '/index.html',
   '/manifest.json',
-  '/icon.svg'
+  '/icon.svg',
+  '/icon.png'
 ];
 
 self.addEventListener('install', (e) => {

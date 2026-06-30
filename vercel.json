@@ -5,7 +5,7 @@
       "destination": "/api/$1"
     },
     {
-      "source": "/((?!api|assets|favicon.ico|manifest.json|icon.svg|firebase-messaging-sw.js).*)",
+      "source": "/((?!api|assets|favicon.ico|manifest.json|icon.svg|icon.png|firebase-messaging-sw.js).*)",
       "destination": "/index.html"
     }
   ]
