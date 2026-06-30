@@ -1,13 +1,11 @@
 {
-  "cleanUrls": true,
-  "trailingSlash": false,
   "rewrites": [
     {
       "source": "/api/(.*)",
       "destination": "/api/$1"
     },
     {
-      "source": "/((?!api|assets|favicon.ico|manifest.json|icon.svg|firebase-messaging-sw.js).*)",
+      "source": "/((?!api).*)" ,
       "destination": "/index.html"
     }
   ]
