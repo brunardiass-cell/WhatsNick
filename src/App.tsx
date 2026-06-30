@@ -205,21 +205,27 @@ export default function App() {
 
     const registerNotificationSystem = async () => {
       if (typeof window === 'undefined' || !('serviceWorker' in navigator) || !('Notification' in window)) {
-        console.log("PWA/Notifications not supported by this browser.");
+        console.log("[FCM_CLIENT_DEBUG] PWA/Notifications not supported by this browser.");
         return;
       }
 
       try {
+        console.log("[FCM_CLIENT_DEBUG] Initializing Service Worker registration...");
         // Register Service Worker
         const registration = await navigator.serviceWorker.register('/firebase-messaging-sw.js');
-        console.log('Service Worker registered with scope:', registration.scope);
+        console.log('[FCM_CLIENT_DEBUG] Service Worker registered with scope:', registration.scope);
 
         // Request Permission
         const permission = await Notification.requestPermission();
+        console.log('[FCM_CLIENT_DEBUG] Notification permission request result:', permission);
+        
         if (permission === 'granted') {
-          console.log('Notification permission granted.');
+          console.log('[FCM_CLIENT_DEBUG] Notification permission is GRANTED.');
           
-          if (!messaging) return;
+          if (!messaging) {
+            console.warn('[FCM_CLIENT_DEBUG] FCM messaging instance is null or undefined.');
+            return;
+          }
 
           // Retrieve dynamic or env VAPID key if configured
           const vapidKey = (import.meta as any).env.VITE_FCM_VAPID_KEY;
@@ -228,23 +234,28 @@ export default function App() {
             ...(vapidKey ? { vapidKey } : {})
           };
 
+          console.log('[FCM_CLIENT_DEBUG] Attempting to retrieve FCM Token with options:', tokenOptions);
           const token = await getToken(messaging, tokenOptions);
 
           if (token) {
-            console.log('FCM Token received:', token);
+            console.log('[FCM_CLIENT_DEBUG] FCM Token received successfully:', token);
+            console.log(`[FCM_CLIENT_DEBUG] Saving token to Firestore (users_v3/${user.uid})...`);
+            
             // Save token and lastOrigin to Firestore users_v3 document
             await setDoc(doc(db, 'users_v3', user.uid), { 
               fcmToken: token,
               lastOrigin: window.location.origin
             }, { merge: true });
+            
+            console.log('[FCM_CLIENT_DEBUG] Token and origin successfully written to Firestore.');
           } else {
-            console.warn('No FCM token received.');
+            console.warn('[FCM_CLIENT_DEBUG] No FCM token received (empty token).');
           }
         } else {
-          console.warn('Notification permission denied.');
+          console.warn('[FCM_CLIENT_DEBUG] Notification permission was NOT granted. Current permission:', permission);
         }
-      } catch (err) {
-        console.error('Error registering FCM notifications:', err);
+      } catch (err: any) {
+        console.error('[FCM_CLIENT_DEBUG] Critical error registering FCM notifications:', err);
       }
     };
 
@@ -2719,6 +2730,7 @@ function ChatView({ user, contact, onBack, setModal, isOnline }: { user: UserPro
       console.log("Message write successful");
 
       // Trigger FCM push notification for normal messages (non-blocking)
+      console.log("[FCM_API_DEBUG] Triggering FCM push notification via API to recipient:", contactUid);
       fetch('/api/messages/push', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -2727,7 +2739,12 @@ function ChatView({ user, contact, onBack, setModal, isOnline }: { user: UserPro
           toUid: contactUid,
           text: mediaType === 'text' ? text : (mediaType === 'image' ? '📷 Foto' : '📞 Chamada')
         })
-      }).catch(err => console.error("Error sending message push:", err));
+      })
+      .then(async (res) => {
+        const data = await res.json();
+        console.log(`[FCM_API_DEBUG] API response status: ${res.status}`, data);
+      })
+      .catch(err => console.error("[FCM_API_DEBUG] Error sending message push:", err));
 
       const lastMsgUpdate = {
         lastMessageAt: serverTimestamp(),

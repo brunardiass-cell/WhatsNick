@@ -34,26 +34,39 @@ if (getApps().length === 0) {
 }
 
 export default async function handler(req: any, res: any) {
-  console.log("API Messages Push chamada");
+  console.log("[FCM_BACKEND_DEBUG] API Messages Push handler invoked");
+  
+  // Log presence of crucial environment variables
+  console.log("[FCM_BACKEND_DEBUG] Env Check:", {
+    FIREBASE_CLIENT_EMAIL: process.env.FIREBASE_CLIENT_EMAIL ? "Configured" : "MISSING",
+    FIREBASE_PRIVATE_KEY: process.env.FIREBASE_PRIVATE_KEY ? `Configured (Length: ${process.env.FIREBASE_PRIVATE_KEY.length})` : "MISSING",
+    projectId: firebaseConfig.projectId
+  });
   
   if (req.method !== "POST") {
+    console.warn("[FCM_BACKEND_DEBUG] Rejected non-POST request:", req.method);
     return res.status(405).json({ error: "Method not allowed" });
   }
 
   const { fromName, toUid, text } = req.body;
+  console.log(`[FCM_BACKEND_DEBUG] Request parameters - fromName: "${fromName}", toUid: "${toUid}", textLength: ${text?.length || 0}`);
 
   if (!toUid) {
+    console.warn("[FCM_BACKEND_DEBUG] Missing recipient user ID (toUid)");
     return res.status(400).json({ error: "Missing recipient user ID (toUid)" });
   }
 
   try {
     const dbId = firebaseConfig.firestoreDatabaseId;
+    console.log(`[FCM_BACKEND_DEBUG] Fetching Firestore instance. dbId: "${dbId || "default"}"`);
     const db = dbId ? getFirestore(dbId) : getFirestore();
     
     // Fetch recipient's document to get fcmToken
+    console.log(`[FCM_BACKEND_DEBUG] Querying Firestore for user: "users_v3/${toUid}"`);
     const userDoc = await db.collection("users_v3").doc(toUid).get();
     
     if (!userDoc.exists) {
+      console.warn(`[FCM_BACKEND_DEBUG] Firestore user document "users_v3/${toUid}" does NOT exist.`);
       return res.status(404).json({ error: "User not found" });
     }
 
@@ -61,9 +74,14 @@ export default async function handler(req: any, res: any) {
     const fcmToken = userData?.fcmToken;
     const lastOrigin = userData?.lastOrigin;
 
+    console.log(`[FCM_BACKEND_DEBUG] User document retrieved. hasFcmToken: ${!!fcmToken}, lastOrigin: "${lastOrigin || "none"}"`);
+    if (fcmToken) {
+      console.log(`[FCM_BACKEND_DEBUG] FCM Token value (first 15 chars): "${fcmToken.substring(0, 15)}..." (Length: ${fcmToken.length})`);
+    }
+
     if (!fcmToken) {
-      console.warn(`No FCM Token found for user ${toUid}`);
-      return res.json({ success: false, reason: "No FCM Token found for this user." });
+      console.warn(`[FCM_BACKEND_DEBUG] No FCM Token found for user ${toUid}`);
+      return res.json({ success: false, reason: "No FCM Token found for this user in users_v3." });
     }
 
     // Try to get dynamic link from request context or lastOrigin or standard fallback
@@ -124,12 +142,20 @@ export default async function handler(req: any, res: any) {
       token: fcmToken,
     };
 
+    console.log("[FCM_BACKEND_DEBUG] Constructing FCM message payload:", JSON.stringify(message, null, 2));
+    
+    console.log("[FCM_BACKEND_DEBUG] Triggering getMessaging().send(message)...");
     const response = await getMessaging().send(message);
-    console.log("FCM push sent successfully for message:", response);
+    console.log("[FCM_BACKEND_DEBUG] FCM push sent successfully. Response messageId:", response);
 
     return res.json({ success: true, messageId: response });
   } catch (error: any) {
-    console.error("Error sending FCM notification for message:", error);
-    return res.status(500).json({ error: "Failed to send push notification", details: error.message });
+    console.error("[FCM_BACKEND_DEBUG] Error sending FCM notification:", error);
+    return res.status(500).json({ 
+      error: "Failed to send push notification", 
+      details: error.message,
+      code: error.code,
+      info: error.errorInfo || null
+    });
   }
 }
