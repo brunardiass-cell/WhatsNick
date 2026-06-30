@@ -25,7 +25,7 @@ messaging.onBackgroundMessage((payload) => {
   self.registration.showNotification(notificationTitle, notificationOptions);
 });
 
-const CACHE_NAME = 'whatsnicky-v1';
+const CACHE_NAME = 'whatsnicky-v2'; // Bumped version to force cache refresh
 const ASSETS = [
   '/',
   '/index.html',
@@ -34,10 +34,29 @@ const ASSETS = [
 ];
 
 self.addEventListener('install', (e) => {
+  self.skipWaiting(); // Force active immediately
   e.waitUntil(
     caches.open(CACHE_NAME).then((cache) => {
       return cache.addAll(ASSETS);
     }).catch(err => console.error("SW cache open error:", err))
+  );
+});
+
+self.addEventListener('activate', (e) => {
+  e.waitUntil(
+    Promise.all([
+      self.clients.claim(), // Claim all clients immediately
+      // Delete old caches
+      caches.keys().then((keys) => {
+        return Promise.all(
+          keys.map((key) => {
+            if (key !== CACHE_NAME) {
+              return caches.delete(key);
+            }
+          })
+        );
+      })
+    ])
   );
 });
 
@@ -51,6 +70,33 @@ self.addEventListener('fetch', (e) => {
     return;
   }
   
+  // Check if request is for HTML/navigation (root or index.html)
+  const isHtml = e.request.mode === 'navigate' || 
+                 e.request.url.endsWith('/') || 
+                 e.request.url.includes('/index.html') ||
+                 !e.request.url.includes('.'); // paths without file extensions
+
+  if (isHtml) {
+    // Network-First strategy for HTML to prevent caching stale main bundle hashes
+    e.respondWith(
+      fetch(e.request)
+        .then((response) => {
+          if (response.status === 200) {
+            const responseClone = response.clone();
+            caches.open(CACHE_NAME).then((cache) => {
+              cache.put(e.request, responseClone);
+            });
+          }
+          return response;
+        })
+        .catch(() => {
+          return caches.match(e.request);
+        })
+    );
+    return;
+  }
+
+  // Cache-First strategy for static assets
   e.respondWith(
     caches.match(e.request).then((response) => {
       return response || fetch(e.request);
