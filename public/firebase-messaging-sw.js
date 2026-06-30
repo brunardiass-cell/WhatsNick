@@ -25,6 +25,61 @@ const messaging = firebase.messaging();
   self.registration.showNotification(notificationTitle, notificationOptions);
 });
 
+// Custom push event handler specifically to force-show notifications on iOS.
+// iOS Safari requires a synchronous/immediate call to showNotification inside event.waitUntil,
+// otherwise background FCM push notifications might not display.
+self.addEventListener('push', (event) => {
+  console.log('[firebase-messaging-sw.js] Raw native push event received.');
+  
+  const isIOS = /iPad|iPhone|iPod/.test(navigator.userAgent) || 
+                (navigator.userAgent.includes('Mac') && navigator.maxTouchPoints > 1);
+  
+  console.log('[firebase-messaging-sw.js] Push environment:', { isIOS, userAgent: navigator.userAgent });
+
+  if (isIOS) {
+    let payload = {};
+    if (event.data) {
+      try {
+        payload = event.data.json();
+        console.log('[firebase-messaging-sw.js] iOS push JSON payload:', payload);
+      } catch (e) {
+        console.warn('[firebase-messaging-sw.js] iOS push payload parse warning. Using raw text:', event.data.text());
+        payload = {
+          notification: {
+            title: "Nova mensagem!",
+            body: event.data.text()
+          }
+        };
+      }
+    }
+
+    // Standard FCM maps notifications to payload.notification or payload.data.
+    // Let's resolve the title, body and other parameters.
+    const title = payload.notification?.title || payload.data?.title || payload.title || "Nova mensagem!";
+    const body = payload.notification?.body || payload.data?.body || payload.body || "Acesse o WhatsNicky para conferir.";
+    const icon = payload.notification?.icon || payload.data?.icon || '/icon.png';
+    const badge = payload.notification?.badge || payload.data?.badge || '/icon.png';
+    const clickAction = payload.notification?.click_action || payload.data?.click_action || payload.data?.link || '/';
+
+    const options = {
+      body: body,
+      icon: icon,
+      badge: badge,
+      data: {
+        ...payload.data,
+        link: clickAction
+      }
+    };
+
+    console.log('[firebase-messaging-sw.js] iOS push forcing registration.showNotification:', title, options);
+    event.waitUntil(
+      self.registration.showNotification(title, options)
+    );
+  } else {
+    console.log('[firebase-messaging-sw.js] Non-iOS device. Letting standard FCM onBackgroundMessage handle it.');
+  }
+});
+
 self.addEventListener('notificationclick', (event) => {
   event.notification.close();
 
