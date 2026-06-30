@@ -17,7 +17,16 @@ setPersistence(auth, browserLocalPersistence);
 
 export const googleProvider = new GoogleAuthProvider();
 
-export const messaging = typeof window !== 'undefined' ? getMessaging(app) : null;
+let messagingInstance = null;
+if (typeof window !== 'undefined') {
+  try {
+    messagingInstance = getMessaging(app);
+  } catch (err) {
+    console.warn("Firebase Messaging is not supported in this browser/environment:", err);
+  }
+}
+
+export const messaging = messagingInstance;
 
 export {
   signInWithPopup,
