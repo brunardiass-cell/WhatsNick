@@ -2,7 +2,7 @@ import React, { useState, useEffect, useRef, Component } from 'react';
 import { 
   auth, db, googleProvider, signInWithPopup, signOut, onAuthStateChanged,
   collection, doc, setDoc, getDoc, getDocs, query, where, onSnapshot, addDoc, orderBy, serverTimestamp, deleteDoc, updateDoc, deleteField,
-  enableNetwork, getDocFromServer, limit
+  enableNetwork, getDocFromServer, limit, messaging, getToken, onMessage
 } from './firebase';
 import { UserProfile, Contact, Message, PendingInvite, UserRole, MascotType, StatusType } from './types';
 import { cn } from './utils';
@@ -198,6 +198,71 @@ export default function App() {
   const [pendingInvites, setPendingInvites] = useState<PendingInvite[]>([]);
   const [showAddFriendModal, setShowAddFriendModal] = useState(false);
   const [friendEmailInput, setFriendEmailInput] = useState('');
+
+  // Initialize service worker and register PWA notifications
+  useEffect(() => {
+    if (!user?.uid) return;
+
+    const registerNotificationSystem = async () => {
+      if (typeof window === 'undefined' || !('serviceWorker' in navigator) || !('Notification' in window)) {
+        console.log("PWA/Notifications not supported by this browser.");
+        return;
+      }
+
+      try {
+        // Register Service Worker
+        const registration = await navigator.serviceWorker.register('/firebase-messaging-sw.js');
+        console.log('Service Worker registered with scope:', registration.scope);
+
+        // Request Permission
+        const permission = await Notification.requestPermission();
+        if (permission === 'granted') {
+          console.log('Notification permission granted.');
+          
+          if (!messaging) return;
+
+          // Retrieve dynamic or env VAPID key if configured
+          const vapidKey = (import.meta as any).env.VITE_FCM_VAPID_KEY;
+          const tokenOptions = {
+            serviceWorkerRegistration: registration,
+            ...(vapidKey ? { vapidKey } : {})
+          };
+
+          const token = await getToken(messaging, tokenOptions);
+
+          if (token) {
+            console.log('FCM Token received:', token);
+            // Save token to Firestore users_v3 document
+            await setDoc(doc(db, 'users_v3', user.uid), { fcmToken: token }, { merge: true });
+          } else {
+            console.warn('No FCM token received.');
+          }
+        } else {
+          console.warn('Notification permission denied.');
+        }
+      } catch (err) {
+        console.error('Error registering FCM notifications:', err);
+      }
+    };
+
+    registerNotificationSystem();
+
+    // Listen to foreground FCM messages
+    if (messaging) {
+      const unsubscribeOnMessage = onMessage(messaging, (payload) => {
+        console.log('Message received in foreground:', payload);
+        // Display inside custom Modal
+        if (payload.notification) {
+          setModal({
+            title: payload.notification.title || "Notificação!",
+            message: payload.notification.body || "",
+            type: 'alert'
+          });
+        }
+      });
+      return () => unsubscribeOnMessage();
+    }
+  }, [user?.uid]);
 
   const MOODS = [
     { label: 'Feliz', emoji: '😊' },
@@ -2484,6 +2549,10 @@ function StatusView({ user, setModal, isUpdating, updateStatus }: { user: UserPr
 }
 
 function ChatView({ user, contact, onBack, setModal, isOnline }: { user: UserProfile, contact: Contact, onBack: () => void, setModal: (m: any) => void, isOnline: boolean }) {
+  const contactUid = contact.uid;
+  const chatId = [user.uid, contactUid].sort().join('_');
+  const contactRef = useRef(contact);
+
   const [messages, setMessages] = useState<Message[]>([]);
   const [inputText, setInputText] = useState('');
   const [showEmoji, setShowEmoji] = useState(false);
@@ -2492,10 +2561,31 @@ function ChatView({ user, contact, onBack, setModal, isOnline }: { user: UserPro
   const [contactProfile, setContactProfile] = useState<UserProfile | null>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const [attentionCooldown, setAttentionCooldown] = useState(0);
 
-  const contactUid = contact.uid;
-  const chatId = [user.uid, contactUid].sort().join('_');
-  const contactRef = useRef(contact);
+  // Manage call attention cooldown across mounts
+  useEffect(() => {
+    if (!contactUid) return;
+    const lastSent = localStorage.getItem(`lastAttentionSent_${contactUid}`);
+    if (lastSent) {
+      const diff = Date.now() - parseInt(lastSent);
+      if (diff < 60000) {
+        setAttentionCooldown(Math.ceil((60000 - diff) / 1000));
+      } else {
+        setAttentionCooldown(0);
+      }
+    } else {
+      setAttentionCooldown(0);
+    }
+  }, [contactUid]);
+
+  useEffect(() => {
+    if (attentionCooldown <= 0) return;
+    const timer = setTimeout(() => {
+      setAttentionCooldown(prev => prev - 1);
+    }, 1000);
+    return () => clearTimeout(timer);
+  }, [attentionCooldown]);
 
   useEffect(() => {
     contactRef.current = contact;
@@ -2681,6 +2771,21 @@ function ChatView({ user, contact, onBack, setModal, isOnline }: { user: UserPro
   };
 
   const callAttention = async () => {
+    if (!user || !contactUid || !contact) return;
+
+    const lastSent = localStorage.getItem(`lastAttentionSent_${contactUid}`);
+    if (lastSent) {
+      const diff = Date.now() - parseInt(lastSent);
+      if (diff < 60000) {
+        setModal({
+          title: 'Aguarde',
+          message: `Você precisa esperar mais ${Math.ceil((60000 - diff) / 1000)} segundos para chamar a atenção novamente.`,
+          type: 'alert'
+        });
+        return;
+      }
+    }
+
     try {
       await addDoc(collection(db, 'chats_v3', chatId, 'messages'), {
         senderId: user.uid,
@@ -2698,7 +2803,12 @@ function ChatView({ user, contact, onBack, setModal, isOnline }: { user: UserPro
       await setDoc(doc(db, 'users_v3', user.uid, 'contacts', contactUid), lastMsgUpdate, { merge: true });
       await setDoc(doc(db, 'users_v3', contactUid, 'contacts', user.uid), { ...lastMsgUpdate, hasUnread: true }, { merge: true });
 
-      const response = await fetch('/api/attention/email', {
+      // Set cooldown and save to localStorage
+      localStorage.setItem(`lastAttentionSent_${contactUid}`, Date.now().toString());
+      setAttentionCooldown(60);
+
+      // Trigger notification email (non-blocking)
+      const emailPromise = fetch('/api/attention/email', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -2706,22 +2816,30 @@ function ChatView({ user, contact, onBack, setModal, isOnline }: { user: UserPro
           toEmail: contact.email,
           toName: contact.name
         })
-      });
+      }).catch(err => console.error("Error sending email:", err));
 
-      if (response.ok) {
-        setModal({
-          title: 'Atenção Chamada!',
-          message: `Um aviso foi enviado para o e-mail de ${contact.name}.`,
-          type: 'alert'
-        });
-      } else {
-        throw new Error('Failed to send email');
-      }
+      // Trigger FCM push notification (non-blocking)
+      const pushPromise = fetch('/api/attention/push', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          fromName: user.name,
+          toUid: contactUid
+        })
+      }).catch(err => console.error("Error sending push:", err));
+
+      await Promise.all([emailPromise, pushPromise]);
+
+      setModal({
+        title: 'Atenção Chamada!',
+        message: `Uma notificação e um e-mail de aviso foram enviados para ${contact.name}!`,
+        type: 'alert'
+      });
     } catch (error) {
       console.error("Error calling attention:", error);
       setModal({
         title: 'Atenção Chamada!',
-        message: 'Atenção registrada no chat, mas houve um erro ao enviar o e-mail.',
+        message: 'Atenção registrada no chat, mas houve um erro ao enviar os alertas.',
         type: 'alert'
       });
     }
@@ -2795,10 +2913,19 @@ function ChatView({ user, contact, onBack, setModal, isOnline }: { user: UserPro
           </button>
           <button 
             onClick={callAttention}
-            className="p-3 bg-white/10 text-white rounded-2xl hover:bg-white/20 transition-colors"
-            title="Chamar Atenção"
+            disabled={attentionCooldown > 0}
+            className={cn(
+              "p-3 rounded-2xl transition-colors relative",
+              attentionCooldown > 0 ? "bg-white/5 text-white/50 cursor-not-allowed" : "bg-white/10 text-white hover:bg-white/20"
+            )}
+            title={attentionCooldown > 0 ? `Aguarde ${attentionCooldown}s` : "Chamar Atenção"}
           >
             <Bell className="w-6 h-6" />
+            {attentionCooldown > 0 && (
+              <span className="absolute -top-1 -right-1 bg-red-500 text-white text-[9px] font-bold rounded-full w-5 h-5 flex items-center justify-center animate-pulse">
+                {attentionCooldown}
+              </span>
+            )}
           </button>
           {isClearAllowed && (
             <button 
