@@ -40,6 +40,23 @@ if (getApps().length === 0) {
   }
 }
 
+function isTokenInvalidError(error: any): boolean {
+  const code = error?.code || "";
+  const message = error?.message || "";
+  const infoCode = error?.errorInfo?.code || "";
+  
+  return (
+    code.includes("registration-token-not-registered") ||
+    code.includes("invalid-registration-token") ||
+    infoCode.includes("registration-token-not-registered") ||
+    infoCode.includes("invalid-registration-token") ||
+    message.includes("NotRegistered") ||
+    message.includes("InvalidRegistration") ||
+    message.includes("404") ||
+    message.includes("410")
+  );
+}
+
 export default async function handler(req: any, res: any) {
   console.log("[FCM_BACKEND_DEBUG] API Attention Push handler invoked");
   
@@ -63,6 +80,8 @@ export default async function handler(req: any, res: any) {
     return res.status(400).json({ error: "Missing recipient user ID (toUid)" });
   }
 
+  let fcmToken: string | null = null;
+
   try {
     const dbId = firebaseConfig.firestoreDatabaseId;
     console.log(`[FCM_BACKEND_DEBUG] Fetching Firestore instance. dbId: "${dbId || "default"}"`);
@@ -78,7 +97,7 @@ export default async function handler(req: any, res: any) {
     }
 
     const userData = userDoc.data();
-    const fcmToken = userData?.fcmToken;
+    fcmToken = userData?.fcmToken || null;
     const lastOrigin = userData?.lastOrigin;
 
     console.log(`[FCM_BACKEND_DEBUG] User document retrieved. hasFcmToken: ${!!fcmToken}, lastOrigin: "${lastOrigin || "none"}"`);
@@ -157,7 +176,22 @@ export default async function handler(req: any, res: any) {
 
     return res.json({ success: true, messageId: response });
   } catch (error: any) {
-    console.error("[FCM_BACKEND_DEBUG] Error sending FCM notification:", error);
+    console.error(`[FCM_BACKEND_DEBUG] Error sending FCM notification to recipient User: "${toUid}". FCM Token value: "${fcmToken?.substring(0, 15)}..."`, error);
+    
+    if (isTokenInvalidError(error)) {
+      console.warn(`[FCM_BACKEND_DEBUG] Stale/invalid token detected for user "${toUid}". Removing fcmToken from users_v3...`);
+      try {
+        const dbId = firebaseConfig.firestoreDatabaseId;
+        const db = dbId ? getFirestore(dbId) : getFirestore();
+        await db.collection("users_v3").doc(toUid).update({
+          fcmToken: null
+        });
+        console.log(`[FCM_BACKEND_DEBUG] Successfully cleared invalid token for user "${toUid}" from database.`);
+      } catch (dbErr) {
+        console.error("[FCM_BACKEND_DEBUG] Failed to clear invalid token from database:", dbErr);
+      }
+    }
+
     return res.status(500).json({ 
       error: "Failed to send push notification", 
       details: error.message,

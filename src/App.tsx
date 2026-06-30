@@ -2,7 +2,7 @@ import React, { useState, useEffect, useRef, Component } from 'react';
 import { 
   auth, db, googleProvider, signInWithPopup, signOut, onAuthStateChanged,
   collection, doc, setDoc, getDoc, getDocs, query, where, onSnapshot, addDoc, orderBy, serverTimestamp, deleteDoc, updateDoc, deleteField,
-  enableNetwork, getDocFromServer, limit, messaging, getToken, onMessage
+  enableNetwork, getDocFromServer, limit, messaging, getToken, onMessage, deleteToken
 } from './firebase';
 import { UserProfile, Contact, Message, PendingInvite, UserRole, MascotType, StatusType } from './types';
 import { cn } from './utils';
@@ -141,6 +141,21 @@ const uploadToCloudinary = async (base64: string): Promise<string> => {
   return data.secure_url;
 };
 
+function urlBase64ToUint8Array(base64String: string) {
+  const padding = '='.repeat((4 - base64String.length % 4) % 4);
+  const base64 = (base64String + padding)
+    .replace(/\-/g, '+')
+    .replace(/_/g, '/');
+
+  const rawData = window.atob(base64);
+  const outputArray = new Uint8Array(rawData.length);
+
+  for (let i = 0; i < rawData.length; ++i) {
+    outputArray[i] = rawData.charCodeAt(i);
+  }
+  return outputArray;
+}
+
 export default function App() {
   console.log("App component loading. Firestore initialized:", !!db);
   const [user, setUser] = useState<UserProfile | null>(null);
@@ -255,6 +270,125 @@ export default function App() {
     }
   };
 
+  const handleRepairNotifications = async () => {
+    console.log("[FCM_CLIENT_DEBUG] Repairing push notifications requested by user.");
+    if (typeof window === 'undefined' || !('serviceWorker' in navigator) || !('Notification' in window)) {
+      setModal({
+        type: 'alert',
+        title: 'Não Suportado',
+        message: 'Seu navegador ou dispositivo não suporta notificações PWA.'
+      });
+      return;
+    }
+
+    try {
+      setModal({
+        type: 'alert',
+        title: 'Reparando...',
+        message: 'Por favor, aguarde enquanto reincrevemos as notificações push para este dispositivo.'
+      });
+
+      const registration = await navigator.serviceWorker.getRegistration('/firebase-messaging-sw.js') 
+        || await navigator.serviceWorker.register('/firebase-messaging-sw.js');
+      
+      console.log("[FCM_CLIENT_DEBUG] Repair: Service Worker registration located/registered.");
+
+      // 1. Unsubscribe from any active standard push subscriptions first
+      const activeSub = await registration.pushManager.getSubscription();
+      if (activeSub) {
+        console.log("[FCM_CLIENT_DEBUG] Repair: Active PushSubscription found. Unsubscribing...", activeSub.endpoint);
+        const unsubscribed = await activeSub.unsubscribe();
+        console.log("[FCM_CLIENT_DEBUG] Repair: Unsubscription result:", unsubscribed);
+      } else {
+        console.log("[FCM_CLIENT_DEBUG] Repair: No active standard PushSubscription to unsubscribe from.");
+      }
+
+      // 2. Clear FCM token using deleteToken
+      if (messaging) {
+        try {
+          console.log("[FCM_CLIENT_DEBUG] Repair: Deleting FCM token...");
+          await deleteToken(messaging);
+          console.log("[FCM_CLIENT_DEBUG] Repair: FCM token deleted successfully.");
+        } catch (delErr) {
+          console.warn("[FCM_CLIENT_DEBUG] Repair: Warning deleting FCM token:", delErr);
+        }
+      }
+
+      // 3. Make sure we have notification permission
+      let permission = Notification.permission;
+      console.log("[FCM_CLIENT_DEBUG] Repair: Current notification permission status:", permission);
+      if (permission !== 'granted') {
+        permission = await Notification.requestPermission();
+        console.log("[FCM_CLIENT_DEBUG] Repair: Request permission response:", permission);
+      }
+
+      if (permission !== 'granted') {
+        setModal({
+          type: 'alert',
+          title: 'Permissão Necessária',
+          message: 'Não é possível reparar as notificações porque a permissão foi negada. Por favor, ative nas configurações do Safari (Ajustes > WhatsNicky > Notificações).'
+        });
+        return;
+      }
+
+      // 4. Force a fresh native PushSubscription creation using pushManager.subscribe()
+      const vapidKey = (import.meta as any).env.VITE_FCM_VAPID_KEY;
+      if (vapidKey) {
+        try {
+          console.log("[FCM_CLIENT_DEBUG] Repair: Creating fresh browser PushSubscription using pushManager.subscribe()...");
+          const convertedVapidKey = urlBase64ToUint8Array(vapidKey);
+          const newNativeSub = await registration.pushManager.subscribe({
+            userVisibleOnly: true,
+            applicationServerKey: convertedVapidKey
+          });
+          console.log("[FCM_CLIENT_DEBUG] Repair: Fresh native PushSubscription created successfully:", newNativeSub.endpoint);
+        } catch (subErr: any) {
+          console.error("[FCM_CLIENT_DEBUG] Repair: Error during manual pushManager.subscribe():", subErr);
+        }
+      }
+
+      // 5. Retrieve fresh FCM Token using getToken
+      if (!messaging) {
+        throw new Error("Serviço de mensagens Firebase indisponível.");
+      }
+
+      const tokenOptions = {
+        serviceWorkerRegistration: registration,
+        ...(vapidKey ? { vapidKey } : {})
+      };
+
+      console.log("[FCM_CLIENT_DEBUG] Repair: Requesting fresh FCM token from server with options:", tokenOptions);
+      const freshToken = await getToken(messaging, tokenOptions);
+
+      if (freshToken && user?.uid) {
+        console.log(`[FCM_CLIENT_DEBUG] Repair: Fresh FCM Token received: "${freshToken.substring(0, 15)}..." (Length: ${freshToken.length})`);
+        console.log(`[FCM_CLIENT_DEBUG] Repair: Saving new token for user "${user.uid}" in Firestore (users_v3) for device: "${navigator.userAgent}"...`);
+
+        await setDoc(doc(db, 'users_v3', user.uid), {
+          fcmToken: freshToken,
+          lastOrigin: window.location.origin
+        }, { merge: true });
+
+        console.log("[FCM_CLIENT_DEBUG] Repair: Token saved successfully in Firestore.");
+
+        setModal({
+          type: 'alert',
+          title: 'Notificações Reparadas!',
+          message: 'A inscrição foi renovada com sucesso! Suas notificações foram reinscritas neste iPhone.'
+        });
+      } else {
+        throw new Error("Não foi possível gerar um token FCM válido.");
+      }
+    } catch (err: any) {
+      console.error("[FCM_CLIENT_DEBUG] Critical error during repair notifications:", err);
+      setModal({
+        type: 'alert',
+        title: 'Erro ao Reparar',
+        message: 'Ocorreu um erro ao reparar as notificações: ' + err.message
+      });
+    }
+  };
+
   // Initialize service worker and register PWA notifications
   useEffect(() => {
     if (!user?.uid) return;
@@ -294,13 +428,32 @@ export default function App() {
         if (permission === 'granted') {
           console.log('[FCM_CLIENT_DEBUG] Notification permission is GRANTED.');
           
+          // 1. Check if there is an active PushSubscription
+          let activeSub = await registration.pushManager.getSubscription();
+          console.log('[FCM_CLIENT_DEBUG] Checked active PushSubscription status:', activeSub ? activeSub.endpoint : 'No existing subscription');
+
+          const vapidKey = (import.meta as any).env.VITE_FCM_VAPID_KEY;
+
+          // 2. If subscription doesn't exist, create/subscribe
+          if (!activeSub && vapidKey) {
+            try {
+              console.log('[FCM_CLIENT_DEBUG] No active PushSubscription found. Creating subscription via pushManager.subscribe()...');
+              const convertedVapidKey = urlBase64ToUint8Array(vapidKey);
+              activeSub = await registration.pushManager.subscribe({
+                userVisibleOnly: true,
+                applicationServerKey: convertedVapidKey
+              });
+              console.log('[FCM_CLIENT_DEBUG] New native PushSubscription registered successfully:', activeSub.endpoint);
+            } catch (subErr: any) {
+              console.error('[FCM_CLIENT_DEBUG] Error registering native PushSubscription:', subErr);
+            }
+          }
+
           if (!messaging) {
             console.warn('[FCM_CLIENT_DEBUG] FCM messaging instance is null or undefined.');
             return;
           }
 
-          // Retrieve dynamic or env VAPID key if configured
-          const vapidKey = (import.meta as any).env.VITE_FCM_VAPID_KEY;
           const tokenOptions = {
             serviceWorkerRegistration: registration,
             ...(vapidKey ? { vapidKey } : {})
@@ -311,7 +464,7 @@ export default function App() {
 
           if (token) {
             console.log('[FCM_CLIENT_DEBUG] FCM Token received successfully:', token);
-            console.log(`[FCM_CLIENT_DEBUG] Saving token to Firestore (users_v3/${user.uid})...`);
+            console.log(`[FCM_CLIENT_DEBUG] Saving token to Firestore (users_v3/${user.uid}) for device: "${navigator.userAgent}"`);
             
             // Save token and lastOrigin to Firestore users_v3 document
             await setDoc(doc(db, 'users_v3', user.uid), { 
@@ -1031,6 +1184,7 @@ export default function App() {
                 isOnline={isOnline}
                 connectionError={connectionError}
                 retryConnection={retryConnection}
+                onRepairNotifications={handleRepairNotifications}
               />
             </div>
             <div className={cn(
@@ -1181,7 +1335,7 @@ export default function App() {
   );
 }
 
-function MainLayout({ user, activeTab, setActiveTab, setView, setActiveChat, setModal, moods, avatars, updateMood, updateProfilePhoto, pendingInvites, acceptInvite, declineInvite, setShowAddFriendModal, onClearContacts, isUpdating, isAdding, setIsAdding, isProcessingInvite, contacts, onSOS, isSendingSOS, updateTrustedSOSContact, updateStatus, updateMascot, updateFavorites, isOnline, connectionError, retryConnection }: any) {
+function MainLayout({ user, activeTab, setActiveTab, setView, setActiveChat, setModal, moods, avatars, updateMood, updateProfilePhoto, pendingInvites, acceptInvite, declineInvite, setShowAddFriendModal, onClearContacts, isUpdating, isAdding, setIsAdding, isProcessingInvite, contacts, onSOS, isSendingSOS, updateTrustedSOSContact, updateStatus, updateMascot, updateFavorites, isOnline, connectionError, retryConnection, onRepairNotifications }: any) {
   return (
     <div className="flex flex-col md:flex-row h-full bg-white w-full">
       {/* Sidebar Navigation (Desktop) / Bottom Navigation (Mobile) */}
@@ -1307,6 +1461,7 @@ function MainLayout({ user, activeTab, setActiveTab, setView, setActiveChat, set
               updateTrustedSOSContact={updateTrustedSOSContact}
               updateMascot={updateMascot}
               updateFavorites={updateFavorites}
+              onRepairNotifications={onRepairNotifications}
             />
           )}
         </div>
@@ -2355,7 +2510,7 @@ function FamilyView({ user, setModal, setView, setActiveChat, isAdding, setIsAdd
   );
 }
 
-function SettingsView({ user, onLogout, setModal, moods, avatars, updateMood, updateProfilePhoto, onClearContacts, isUpdating, updateTrustedSOSContact, updateMascot, updateFavorites }: { user: UserProfile, onLogout: () => void, setModal: (m: any) => void, moods: any[], avatars: string[], updateMood: (m: string, e: string) => void, updateProfilePhoto: (url: string) => Promise<void>, onClearContacts: () => void, isUpdating: boolean, updateTrustedSOSContact: (email: string) => Promise<void>, updateMascot: (m: string) => Promise<void>, updateFavorites: (f: any) => Promise<void> }) {
+function SettingsView({ user, onLogout, setModal, moods, avatars, updateMood, updateProfilePhoto, onClearContacts, isUpdating, updateTrustedSOSContact, updateMascot, updateFavorites, onRepairNotifications }: { user: UserProfile, onLogout: () => void, setModal: (m: any) => void, moods: any[], avatars: string[], updateMood: (m: string, e: string) => void, updateProfilePhoto: (url: string) => Promise<void>, onClearContacts: () => void, isUpdating: boolean, updateTrustedSOSContact: (email: string) => Promise<void>, updateMascot: (m: string) => Promise<void>, updateFavorites: (f: any) => Promise<void>, onRepairNotifications: () => Promise<void> }) {
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [uploading, setUploading] = useState(false);
   const [sosEmail, setSosEmail] = useState(user.trustedSOSContactEmail || '');
@@ -2583,6 +2738,14 @@ function SettingsView({ user, onLogout, setModal, moods, avatars, updateMood, up
             </div>
           </div>
         </section>
+
+        <button 
+          onClick={onRepairNotifications}
+          className="w-full p-4 bg-white text-[#CE93D8] rounded-3xl font-bold shadow-sm border border-slate-100 flex items-center justify-center gap-2 hover:bg-purple-50/50 transition-colors"
+        >
+          <Bell className="w-5 h-5 text-[#CE93D8]" />
+          Reparar Notificações
+        </button>
 
         <button 
           onClick={onClearContacts}
