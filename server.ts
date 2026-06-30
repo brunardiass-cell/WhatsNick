@@ -5,6 +5,8 @@ import cors from "cors";
 import dotenv from "dotenv";
 import sosEmailHandler from "./api/sos/email";
 import attentionEmailHandler from "./api/attention/email";
+import attentionPushHandler from "./api/attention/push";
+import messagesPushHandler from "./api/messages/push";
 
 dotenv.config();
 
@@ -25,6 +27,18 @@ async function startServer() {
   app.post("/api/attention/email", async (req, res) => {
     console.log("API Attention chamada");
     return attentionEmailHandler(req, res);
+  });
+
+  // Attention Push Endpoint
+  app.post("/api/attention/push", async (req, res) => {
+    console.log("API Attention Push chamada");
+    return attentionPushHandler(req, res);
+  });
+
+  // Messages Push Endpoint
+  app.post("/api/messages/push", async (req, res) => {
+    console.log("API Messages Push chamada");
+    return messagesPushHandler(req, res);
   });
 
   // Vite middleware for development

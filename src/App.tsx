@@ -2715,6 +2715,17 @@ function ChatView({ user, contact, onBack, setModal, isOnline }: { user: UserPro
       });
       console.log("Message write successful");
 
+      // Trigger FCM push notification for normal messages (non-blocking)
+      fetch('/api/messages/push', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          fromName: user.name,
+          toUid: contactUid,
+          text: mediaType === 'text' ? text : (mediaType === 'image' ? '📷 Foto' : '📞 Chamada')
+        })
+      }).catch(err => console.error("Error sending message push:", err));
+
       const lastMsgUpdate = {
         lastMessageAt: serverTimestamp(),
         lastMessageText: mediaType === 'text' ? text : (mediaType === 'image' ? '📷 Foto' : '📞 Chamada'),
